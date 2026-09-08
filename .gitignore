@@ -1,0 +1,6 @@
+# Ignore everything by default; only tracked files are allowlisted below.
+*
+# Allowlist: commit these.
+!AGENTS.md
+!sg_dl.py
+!.gitignore
