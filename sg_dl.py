@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urljoin
@@ -64,6 +65,8 @@ def fetch_json(session, url, what):
     r = session.get(url, headers=EMBED_ORIGIN_HEADERS, timeout=TIMEOUT)
   except requests.RequestException as e:
     fail(f"could not fetch {what}: {e}\n(URLs expire fast — re-paste a fresh URL and retry.)")
+  if r.status_code == 410:
+    fail(f"{what} token expired.")
   if r.status_code in (401, 403):
     fail(f"{what} rejected (HTTP {r.status_code}) — URL expired. "
          "Re-paste a fresh embed/config URL and retry.")
@@ -132,6 +135,7 @@ def parse_playlist(pl):
       "bitrate": v.get("bitrate") or 0,
       "codecs": v.get("codecs"),
       "duration": v.get("duration"),
+      "framerate": v.get("framerate"),
       "init_segment": v.get("init_segment"),
       "base_url": v.get("base_url") or pl.get("base_url") or "",
       "segments": v.get("segments"),
@@ -145,6 +149,8 @@ def parse_playlist(pl):
       "bitrate": a.get("bitrate") or 0,
       "codecs": a.get("codecs"),
       "mime_type": a.get("mime_type"),
+      "sample_rate": a.get("sample_rate"),
+      "channels": a.get("channels"),
       "init_segment": a.get("init_segment"),
       "base_url": a.get("base_url") or pl.get("base_url") or "",
       "segments": a.get("segments"),
@@ -160,6 +166,17 @@ def parse_playlist(pl):
 def label_for(v):
   h = v.get("height")
   return f"{h}p" if h else v.get("id", "?")[:8]
+
+
+def audio_label(codecs):
+  c = (codecs or "").lower()
+  if c.startswith("mp4a."):
+    return "AAC"
+  if c.startswith("opus"):
+    return "Opus"
+  if c.startswith("ec-3") or c.startswith("ac-3"):
+    return "Dolby Digital"
+  return codecs or "audio"
 
 
 def select_video(videos, quality):
@@ -193,10 +210,27 @@ def resolve_segments(playlist_url, rendition):
   return [urljoin(base, s["url"]) for s in rendition["segments"]]
 
 
+WINDOWS_RESERVED_NAMES = {
+  "CON", "PRN", "AUX", "NUL",
+  *(f"COM{i}" for i in range(1, 10)),
+  *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
 def sanitize(name):
-  name = re.sub(r"[^\w\s.\-()]", "_", name).strip()
-  name = re.sub(r"\s+", " ", name)
+  """Portable filename stem: strips the Windows-reserved set (strictest OS),
+  which also covers macOS/Linux restrictions. Replacement is always '_'."""
+  name = re.sub(r"\s+", " ", name).strip()
+  name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip().rstrip(".")
+  if name.upper() in WINDOWS_RESERVED_NAMES:
+    name = "_" + name
   return name or "video"
+
+
+def sanitize_path(p):
+  """Sanitize the filename stem of a user-supplied path, keep dir + suffix."""
+  p = Path(p)
+  return p.parent / (sanitize(p.stem) + p.suffix)
 
 
 def _get_with_retry(session, url, idx):
@@ -226,24 +260,45 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency)
       done = set()
   todo = [i for i in range(len(seg_urls))
           if i not in done or not (parts / f"{i:05d}.m4s").exists()]
+  total = len(seg_urls)
   bar = None
   if tqdm and todo:
-    bar = tqdm(total=len(seg_urls), initial=len(seg_urls) - len(todo),
+    bar = tqdm(total=total, initial=total - len(todo),
                unit="seg", desc=kind)
-  elif todo:
-    print(f"{kind}: {len(seg_urls) - len(todo)}/{len(seg_urls)} segments cached",
-          file=sys.stderr)
+  elif todo and done:
+    print(f"{kind}: {len(done)}/{total} segments cached", file=sys.stderr)
+  elif not todo:
+    print(f"{kind}: {total}/{total} segments cached", file=sys.stderr)
 
   errors = []
-  completed = []
+  lock = threading.Lock()
+  start = time.monotonic()
+  last_print = [0.0]
+  max_width = [0]
+
+  def _write_line(text):
+    max_width[0] = max(max_width[0], len(text))
+    sys.stderr.write("\r" + text.ljust(max_width[0]))
+    sys.stderr.flush()
+
+  def _render(force=False):
+    now = time.monotonic()
+    if not force and now - last_print[0] < 0.2:
+      return
+    last_print[0] = now
+    n = len(done)
+    el = now - start
+    rate = n / el if el > 0 and n > 0 else 0.0
+    eta = f"{(total - n) / rate:.0f}s" if rate > 0 and n < total else "--"
+    _write_line(f"{kind}: {n}/{total} segs, {rate:.1f} seg/s, ETA {eta}")
 
   def _mark(idx):
-    done.add(idx)
-    completed.append(idx)
-    if bar:
-      bar.update(1)
-    elif len(completed) % 25 == 0 or len(done) == len(seg_urls):
-      print(f"{kind}: {len(done)}/{len(seg_urls)} segments", file=sys.stderr)
+    with lock:
+      done.add(idx)
+      if bar:
+        bar.update(1)
+      else:
+        _render()
 
   if todo:
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
@@ -263,8 +318,13 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency)
       manifest.write_text(json.dumps(sorted(done)))
   if errors:
     fail(f"{kind} download had {len(errors)} failed segment(s), e.g.: {errors[0]}")
-  if len(done) != len(seg_urls):
-    fail(f"{kind} incomplete: {len(done)}/{len(seg_urls)} segments.")
+  if len(done) != total:
+    fail(f"{kind} incomplete: {len(done)}/{total} segments.")
+  if not bar:
+    el = time.monotonic() - start
+    _write_line(f"{kind}: {total}/{total} segs, done in {el:.1f}s")
+    sys.stderr.write("\n")
+    sys.stderr.flush()
 
   out = workdir / f"{kind}.mp4"
   with open(out, "wb") as f:
@@ -275,16 +335,64 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency)
   return out
 
 
-def mux(video_path, audio_path, out_path):
+def mux(video_path, audio_path, out_path, total_duration=None):
   ff = shutil.which("ffmpeg")
   if not ff:
     fail("ffmpeg not found in PATH.")
-  cmd = [ff, "-y", "-i", str(video_path), "-i", str(audio_path),
-         "-c", "copy", "-movflags", "+faststart", str(out_path)]
-  r = subprocess.run(cmd, capture_output=True, text=True)
-  if r.returncode != 0:
-    print(r.stderr[-3000:], file=sys.stderr)
+  out_path = Path(out_path)
+  print(f"\nMuxing -> {out_path.resolve()}", file=sys.stderr)
+  cmd = [ff, "-y", "-v", "error", "-nostats",
+         "-i", str(video_path), "-i", str(audio_path),
+         "-c", "copy", "-movflags", "+faststart",
+         "-progress", "pipe:1", str(out_path)]
+  total_us = int(total_duration * 1_000_000) if total_duration else None
+  start = time.monotonic()
+  last_print = [0.0]
+  max_width = [0]
+
+  def _write_mux_line(text):
+    max_width[0] = max(max_width[0], len(text))
+    sys.stderr.write("\r" + text.ljust(max_width[0]))
+    sys.stderr.flush()
+
+  proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True)
+  try:
+    for line in proc.stdout:
+      line = line.strip()
+      if not line.startswith("out_time_ms="):
+        continue
+      try:
+        cur = int(line.split("=", 1)[1])
+      except ValueError:
+        continue
+      if cur <= 0:
+        continue
+      now = time.monotonic()
+      if now - last_print[0] < 0.2:
+        continue
+      last_print[0] = now
+      el = now - start
+      if total_us:
+        frac = min(cur / total_us, 1.0)
+        eta = el * (1 - frac) / frac if frac > 0 else 0.0
+        _write_mux_line(f"Muxing: {frac * 100:.0f}%, ETA {eta:.0f}s")
+      else:
+        _write_mux_line(f"Muxing: {el:.0f}s elapsed...")
+  finally:
+    if proc.stdout:
+      proc.stdout.close()
+  rc = proc.wait()
+  err = proc.stderr.read() if proc.stderr else ""
+  if proc.stderr:
+    proc.stderr.close()
+  if rc != 0:
+    print(err[-3000:], file=sys.stderr)
     fail("ffmpeg mux failed.")
+  el = time.monotonic() - start
+  _write_mux_line(f"Muxing: done in {el:.1f}s")
+  sys.stderr.write("\n")
+  sys.stderr.flush()
   return out_path
 
 
@@ -324,8 +432,8 @@ def main(argv=None):
   ap.add_argument("--quality", default="best",
                   help="height label (1080p/720p/540p/360p/240p), 'best', or rendition id prefix")
   ap.add_argument("--output", "-o", default=None, help="output MP4 path")
-  ap.add_argument("--concurrency", "-j", type=int, default=8,
-                  help="parallel segment downloads (default 8)")
+  ap.add_argument("--concurrency", "-j", type=int, default=4,
+                  help="parallel segment downloads (default 4)")
   ap.add_argument("--keep-intermediate", action="store_true",
                   help="keep video/audio intermediates and parts dir")
   args = ap.parse_args(argv)
@@ -373,7 +481,12 @@ def main(argv=None):
 
   name = sanitize(title or config.get("video", {}).get("title") or "video")
   q = qmap.get(video["id"], label_for(video))
-  out_path = Path(output_arg) if output_arg else Path(f"{name} [{q}].mp4")
+  if output_arg:
+    out_path = sanitize_path(output_arg)
+    if Path(output_arg).name != out_path.name:
+      print(f"note: sanitized output name to '{out_path.name}'", file=sys.stderr)
+  else:
+    out_path = Path(f"{name} [{q}].mp4")
   if out_path.exists():
     fail(f"output exists: {out_path} (remove it or pass a different output path).")
   if out_path.suffix.lower() != ".mp4":
@@ -381,12 +494,16 @@ def main(argv=None):
 
   workdir = out_path.parent / (out_path.stem + ".sgdl")
   workdir.mkdir(parents=True, exist_ok=True)
-  print(f"video: {q} {video['width']}x{video['height']} "
-        f"({len(v_urls)} segs), audio: {audio['codecs']} ({len(a_urls)} segs)",
+  fps = f" {video['framerate']:.2f}fps" if video.get("framerate") else ""
+  sr = audio.get("sample_rate")
+  sr_label = f" {sr / 1000:.1f}kHz" if sr else ""
+  print(f"video: {q} {video['width']}x{video['height']}{fps} "
+        f"({len(v_urls)} segs), "
+        f"audio: {audio_label(audio.get('codecs'))}{sr_label} ({len(a_urls)} segs)",
         file=sys.stderr)
   v_path = download_rendition("video", video, v_urls, workdir, session, args.concurrency)
   a_path = download_rendition("audio", audio, a_urls, workdir, session, args.concurrency)
-  mux(v_path, a_path, out_path)
+  mux(v_path, a_path, out_path, total_duration=video.get("duration"))
   if not args.keep_intermediate:
     shutil.rmtree(workdir, ignore_errors=True)
   print(str(out_path))
