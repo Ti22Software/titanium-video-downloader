@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""studygateway-dl: single-file streaming video downloader for studygateway.com.
+"""Titanium Downloader (ti22-dl): single-file streaming video downloader.
 
 Pipeline (downstream-first, no login yet):
   embed URL (embed.vhx.tv/videos/...) -> window.OTTData.config_url
@@ -8,8 +8,8 @@ Pipeline (downstream-first, no login yet):
   segments -> video.mp4 + audio.m4a -> ffmpeg -c copy mux -> out.mp4
 
 Usage:
-  sg_dl.py EMBED_OR_CONFIG_URL [OUTPUT] [--list-qualities] [--quality Q]
-                                [--output PATH] [--concurrency N] [--keep-intermediate]
+  ti22-dl EMBED_OR_CONFIG_URL [OUTPUT] [--list-qualities] [--quality Q]
+                               [--output PATH] [--concurrency N] [--keep-intermediate]
 """
 
 import argparse
@@ -492,7 +492,7 @@ def main(argv=None):
   if out_path.suffix.lower() != ".mp4":
     out_path = out_path.with_suffix(".mp4")
 
-  workdir = out_path.parent / (out_path.stem + ".sgdl")
+  workdir = out_path.parent / (out_path.stem + ".ti22")
   workdir.mkdir(parents=True, exist_ok=True)
   fps = f" {video['framerate']:.2f}fps" if video.get("framerate") else ""
   sr = audio.get("sample_rate")

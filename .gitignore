@@ -1,5 +1,6 @@
 # Ignore everything by default; only tracked files are allowlisted below.
 *
 # Allowlist: commit these.
-!sg_dl.py
+!ti22_dl.py
+!ARCHITECTURE.md
 !.gitignore
