@@ -6,15 +6,33 @@ Release binary name: `ti22-dl` (`ti22-dl.exe` on Windows).
 
 ## Current state (verified working)
 
-`ti22_dl.py` downloads one studygateway video end-to-end: embed/config URL in,
-muxed 1080p MP4 out. Verified against a live ~800MB download (ffprobe specs,
-null-decode, VLC playback, md5-determinism across runs).
+`ti22_dl.py` downloads one studygateway video end-to-end: watch slug, embed,
+or config URL in, muxed 1080p MP4 out. Verified against a live ~800MB download
+(ffprobe specs, null-decode, VLC playback, md5-determinism across runs).
+Happy-path SAML plumbing verified live (302 → SAMLRequest → POST → browse),
+but pure-requests login does NOT authenticate: server demands reCAPTCHA v3
+(empty g-recaptcha-response rejected) and /browse is PUBLIC (200 logged-out),
+so the old status-based verify false-positived `login ok`. Verify is now
+authoritative via `_current_user`/logout markers; unauthenticated browse
+correctly raises `login rejected`. Primary login path is now
+`--use-browser-login` (Playwright Chromium harvests real session into the
+same pipeline); `--cookies` remains the manual fallback.
 
 ### Pipeline: the 4 hops
 
 ```
-watch.studygateway.com/.../videos/<slug>  (.env login — NOT yet automated)
-  → iframe embed.vhx.tv/videos/<vhx_id>?auth-user-token=<hours-lived JWT>
+watch.studygateway.com/.../videos/<slug>  (auto-login: --email/--password
+  or TI22_EMAIL/TI22_PASSWORD; --cookies Netscape fallback; --login-only test)
+  → GET watch/login (302 Location: www.../login?SAMLRequest=...)
+  → GET www/login?SAMLRequest=... (_token + hidden SAMLRequest/RelayState)
+  → POST www/login/saml (login-type=original; requires real reCAPTCHA v3
+    token — requests-only posts stay logged-out; use --use-browser-login)
+  → verify AUTHORITATIVELY via _current_user/logout markers (browse is
+    public 200 either way; cookie presence proves nothing)
+  → slug page (Referer: .../browse, never self) → tokenized iframe
+    embed.vhx.tv/videos/<vhx_id>?auth-user-token=<hours-lived JWT>
+    (generic iframe without token 401s; parse order: tokenized iframe →
+    window.VHX.config.embed_url → bare token join → generic fallback)
   → window.OTTData.config_url in embed HTML
   → player.vimeo.com/video/<clip_id>/config?token=<60-SEC JWT>
   → request.files.dash.cdns[default_cdn].avc_url
@@ -32,9 +50,14 @@ watch.studygateway.com/.../videos/<slug>  (.env login — NOT yet automated)
 | Playlist URL      | ~5380s   | Segment 401/403/410 → re-resolve |
 
 Pasted config URLs are inherently fragile (browser may have consumed the
-single-use token; 60s expires while copy-pasting). The reliable input is the
-**embed URL** — the script mints and consumes its own config token in seconds.
-Full login automation (hop 1) removes pasting entirely; see Phase 3.
+single-use token; 60s expires while copy-pasting). The reliable inputs are the
+**watch slug URL** (browser login mints its own embed/config tokens in
+seconds) or the **embed URL** — both minted-and-consumed live.
+Login paths: `--use-browser-login` (Playwright Chromium, passes reCAPTCHA v3
+natively; needs `pip install playwright && playwright install chromium`),
+`--cookies` Netscape export (manual fallback). Pure-requests password login
+is kept for plumbing/tests but rejected live by reCAPTCHA — no solver.
+See Phase 3.
 
 ### Current module layout (`ti22_dl.py`, ~500 lines)
 

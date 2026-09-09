@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Titanium Downloader (ti22-dl): single-file streaming video downloader.
 
-Pipeline (downstream-first, no login yet):
+Pipeline (happy-path login + downstream):
+  watch.studygateway.com/.../videos/<slug> --login--> embed.vhx.tv iframe URL
   embed URL (embed.vhx.tv/videos/...) -> window.OTTData.config_url
   config URL (player.vimeo.com/video/.../config?...) -> request.files.dash playlist URL
   playlist.json -> video rendition + AAC audio rendition segment URLs
   segments -> video.mp4 + audio.m4a -> ffmpeg -c copy mux -> out.mp4
 
 Usage:
-  ti22-dl EMBED_OR_CONFIG_URL [OUTPUT] [--list-qualities] [--quality Q]
-                               [--output PATH] [--concurrency N] [--keep-intermediate]
+  ti22-dl EMBED_OR_CONFIG_OR_WATCH_URL [OUTPUT] [--list-qualities] [--quality Q]
+                                [--output PATH] [--concurrency N] [--keep-intermediate]
+                                [--email E --password P] [--cookies FILE] [--login-only]
 """
 
 import argparse
 import base64
 import concurrent.futures
+import getpass
 import json
 import os
 import re
@@ -24,7 +27,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 
@@ -53,6 +56,410 @@ EMBED_DOC_HEADERS = {
 
 TIMEOUT = 30
 RETRIES = 5
+
+WATCH_BASE = "https://watch.studygateway.com"
+WATCH_LOGIN_URL = WATCH_BASE + "/login"
+WATCH_BROWSE_URL = WATCH_BASE + "/browse"
+WWW_BASE = "https://www.studygateway.com"
+WWW_LOGIN_URL = WWW_BASE + "/login"
+SAML_POST_URL = WWW_BASE + "/login/saml"
+
+WATCH_DOC_HEADERS = {
+  "User-Agent": UA,
+  "Referer": "https://watch.studygateway.com/",
+  "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+             "image/avif,image/webp,image/apng,*/*;q=0.8"),
+  "Accept-Language": "en-US,en;q=0.5",
+  "Upgrade-Insecure-Requests": "1",
+}
+WWW_DOC_HEADERS = {
+  "User-Agent": UA,
+  "Referer": "https://www.studygateway.com/",
+  "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+             "image/avif,image/webp,image/apng,*/*;q=0.8"),
+  "Accept-Language": "en-US,en;q=0.5",
+  "Upgrade-Insecure-Requests": "1",
+}
+
+
+class AuthError(Exception):
+  """Login failed or blocked (recaptcha/cloudflare/2fa/creds)."""
+
+
+def _host(url):
+  """Lowercased hostname, or '' if unparseable. Avoids substring false
+  positives (embed URLs carry watch.studygateway.com in query params)."""
+  try:
+    return (urlparse(url or "").netloc or "").lower()
+  except Exception:
+    return ""
+
+
+def _hidden_input(html, name):
+  """Return value of <input name=... value=...> or None (no bs4, stdlib only)."""
+  m = re.search(
+    r'<input[^>]*\bname=["\']' + re.escape(name) + r'["\'][^>]*>',
+    html, re.IGNORECASE)
+  if not m:
+    return None
+  tag = m.group(0)
+  v = re.search(r'\bvalue=["\']([^"\']*)["\']', tag)
+  return v.group(1) if v else ""
+
+
+def _looks_like_challenge(html):
+  """True only for actual bot-block pages, NOT the normal login widget.
+
+  The normal www login page always contains g-recaptcha, so that alone
+  must not count as blocked. Only hard challenge markers qualify.
+  """
+  low = html.lower()
+  markers = ("cf-challenge", "challenge-platform", "cf-mitigated",
+             "attention required", "access denied",
+             "captcha-required", "captcha required",
+             "turnstile", "two-factor", "one-time passcode",
+             "enter verification code")
+  return any(m in low for m in markers)
+
+
+def _auth_state(html):
+  """Authoritative logged-in check. /browse is PUBLIC (200 logged-out), so
+  status/url prove nothing. Require user markers seen in authenticated dumps:
+  _current_user JSON or logout form. window.TOKEN alone is NOT enough (present
+  on generic pages). Returns dict of redacted flags."""
+  low = (html or "").lower()
+  has_user = "_current_user" in low
+  has_logout = "btn-logout-form" in low or "btn-logout" in low
+  has_window_token = "window.token" in low
+  return {"has_user": has_user, "has_logout": has_logout,
+          "has_window_TOKEN": has_window_token,
+          "authed": bool(has_user or has_logout)}
+
+
+def _debug_auth_state(label, html, debug):
+  if not debug:
+    return {}
+  st = _auth_state(html)
+  print(f"debug-login: {label} has_user={st['has_user']} "
+        f"has_logout={st['has_logout']} has_window_TOKEN={st['has_window_TOKEN']} "
+        f"authed={st['authed']}", file=sys.stderr)
+  return st
+
+
+def _debug_redact_url(url):
+  """Host + path only, plus bare param names (no token values)."""
+  try:
+    u = urlparse(url or "")
+    return f"{u.scheme}://{u.netloc}{u.path}"
+  except Exception:
+    return "(unparseable url)"
+
+
+def _debug_login_state(label, html=None, url=None, status=None, session=None):
+  low = (html or "").lower()
+  hits = [m for m in ("cf-challenge", "challenge-platform", "cf-mitigated",
+                      "attention required", "access denied",
+                      "captcha-required", "captcha required",
+                      "turnstile", "two-factor", "one-time passcode",
+                      "enter verification code") if m in low]
+  cookie_names = sorted({c.name for c in session.cookies} if session is not None else [])
+  print(f"debug-login: {label} status={status} url={_debug_redact_url(url)} "
+        f"len={len(html or '')} challenge_hits={hits} cookies={cookie_names}",
+        file=sys.stderr)
+
+
+def get_creds(args):
+  """Precedence: CLI flags > TI22_EMAIL/TI22_PASSWORD env > interactive prompt."""
+  email = args.email or os.environ.get("TI22_EMAIL")
+  password = args.password or os.environ.get("TI22_PASSWORD")
+  if email and password:
+    return email, password
+  if email and not password and sys.stdin.isatty():
+    return email, getpass.getpass("password: ")
+  return email, password
+
+
+def load_cookies(session, path):
+  """Load Netscape-format cookies.txt into session (manual fallback)."""
+  import http.cookiejar as cj
+  jar = cj.MozillaCookieJar(str(path))
+  try:
+    jar.load(ignore_discard=True, ignore_expires=True)
+  except Exception as e:
+    raise AuthError(f"could not load --cookies {path}: {e}")
+  session.cookies.update(jar)
+  return session
+
+
+class AuthProvider:
+  """Pluggable site auth: match(url) / login(session, creds) / resolve_embed()."""
+
+  def match(self, url):
+    raise NotImplementedError
+
+  def login(self, session, email, password, debug=False):
+    raise NotImplementedError
+
+  def browser_login(self, session, email, password, debug=False, headed=False):
+    raise NotImplementedError
+
+  def resolve_embed(self, session, watch_url, debug=False):
+    raise NotImplementedError
+
+
+class StudyGatewayAuth(AuthProvider):
+  """Happy-path SAML form login for studygateway (requests-only, no JS)."""
+
+  def match(self, url):
+    return _host(url) == "watch.studygateway.com"
+
+  def login(self, session, email, password, debug=False):
+    if not email or not password:
+      raise AuthError("watch URL needs --email/--password or TI22_EMAIL/TI22_PASSWORD.")
+    # 1. GET watch/login WITHOUT following redirects to capture SAMLRequest.
+    # Verified: 302 Location: https://www.studygateway.com/login?SAMLRequest=...
+    saml_request = ""
+    relay_state = ""
+    token = ""
+    www_login_url = WWW_LOGIN_URL
+    try:
+      w0 = session.get(WATCH_LOGIN_URL, headers=WATCH_DOC_HEADERS,
+                       timeout=TIMEOUT, allow_redirects=False)
+      if debug:
+        loc = w0.headers.get("Location", "") if hasattr(w0, "headers") else ""
+        print(f"debug-login: GET watch/login (no-follow) status={w0.status_code} "
+              f"location={_debug_redact_url(loc)} has_saml={'SAMLRequest=' in loc}",
+              file=sys.stderr)
+      if w0.status_code in (301, 302, 303, 307, 308):
+        loc = w0.headers.get("Location", "")
+        if loc:
+          www_login_url = urljoin(WATCH_LOGIN_URL, loc)
+          try:
+            qs = parse_qs(urlparse(www_login_url).query)
+            if "SAMLRequest" in qs and qs["SAMLRequest"]:
+              saml_request = qs["SAMLRequest"][0]
+            if "RelayState" in qs and qs["RelayState"]:
+              relay_state = qs["RelayState"][0]
+          except Exception:
+            pass
+      else:
+        # Unexpected 200: try hidden inputs, then fall back to followed GET below.
+        try:
+          saml_request = _hidden_input(w0.text, "SAMLRequest") or ""
+          relay_state = _hidden_input(w0.text, "RelayState") or ""
+        except Exception:
+          pass
+      # Still seed cookies with a followed GET (harmless, keeps _session fresh).
+      try:
+        session.get(WATCH_LOGIN_URL, headers=WATCH_DOC_HEADERS, timeout=TIMEOUT)
+      except requests.RequestException:
+        pass
+    except requests.RequestException as e:
+      raise AuthError(f"could not reach watch login: {e}")
+    # 2. GET the full www login URL INCLUDING ?SAMLRequest=... (not bare /login).
+    try:
+      r = session.get(www_login_url, headers=WWW_DOC_HEADERS, timeout=TIMEOUT)
+    except requests.RequestException as e:
+      raise AuthError(f"could not reach www login: {e}")
+    if r.status_code != 200:
+      raise AuthError(f"www login returned HTTP {r.status_code}.")
+    html = r.text
+    www_login_url = r.url  # may now include ?SAMLRequest=...
+    if "SAMLRequest=" in www_login_url:
+      m = re.search(r"SAMLRequest=([^&]+)", www_login_url)
+      if m:
+        saml_request = m.group(1)
+    token = _hidden_input(html, "_token") or ""
+    saml_request = _hidden_input(html, "SAMLRequest") or saml_request
+    relay_state = _hidden_input(html, "RelayState") or relay_state
+    if debug:
+      print(f"debug-login: www login url={_debug_redact_url(www_login_url)} "
+            f"has_token={bool(token)} token_len={len(token)} "
+            f"has_samlrequest={bool(saml_request)} saml_len={len(saml_request)} "
+            f"has_relay={bool(relay_state)}",
+            file=sys.stderr)
+      _debug_login_state("www login html", html=html, url=www_login_url,
+                         status=r.status_code, session=session)
+    if not token or not saml_request:
+      if _looks_like_challenge(html):
+        raise AuthError("login blocked by bot check (challenge page) — "
+                        "retry with --cookies cookies.txt (Netscape export).")
+      raise AuthError("could not parse www login form (page format changed). "
+                      "Re-run with --debug-login and report has_token/has_samlrequest.")
+    # 3. POST creds to SAML endpoint (happy path: no JS recaptcha token).
+    form = {
+      "_token": token,
+      "login-type": "original",
+      "email": email,
+      "password": password,
+      "SAMLRequest": saml_request,
+      "RelayState": relay_state,
+      "g-recaptcha-response": "",
+    }
+    headers = dict(WWW_DOC_HEADERS)
+    headers["Origin"] = WWW_BASE
+    headers["Referer"] = www_login_url
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    try:
+      r = session.post(SAML_POST_URL, data=form, headers=headers,
+                       timeout=TIMEOUT, allow_redirects=True)
+    except requests.RequestException as e:
+      raise AuthError(f"login POST failed: {e}")
+    if debug:
+      _debug_login_state("POST login/saml", html=getattr(r, "text", ""),
+                         url=getattr(r, "url", ""), status=r.status_code,
+                         session=session)
+    # 4. Verify AUTHORITATIVELY: /browse is PUBLIC (200 logged-out), so
+    # status/url prove nothing. Require _current_user/logout markers.
+    try:
+      b = session.get(WATCH_BROWSE_URL, headers=WATCH_DOC_HEADERS,
+                      timeout=TIMEOUT, allow_redirects=True)
+    except requests.RequestException as e:
+      raise AuthError(f"login verify failed: {e}")
+    if debug:
+      _debug_login_state("GET watch/browse", html=getattr(b, "text", ""),
+                         url=getattr(b, "url", ""), status=b.status_code,
+                         session=session)
+    st = _debug_auth_state("browse auth", getattr(b, "text", ""), debug)
+    if not st.get("authed"):
+      if b.status_code != 200 or "/login" in (b.url or ""):
+        body = b.text.lower() if getattr(b, "text", None) else ""
+        if _looks_like_challenge(b.text if getattr(b, "text", None) else ""):
+          raise AuthError("login blocked by bot check (challenge on verify) — "
+                          "retry with --cookies cookies.txt (Netscape export).")
+      raise AuthError("login rejected (server kept logged-out browse page — "
+                      "bad email/password, expired SAMLRequest, or missing "
+                      "reCAPTCHA token) — retry with --cookies cookies.txt or "
+                      "--use-browser-login if creds are correct.")
+    return session
+
+  def browser_login(self, session, email, password, debug=False, headed=False):
+    """Playwright harvester: real Chromium passes reCAPTCHA v3 natively,
+    follows saml/consume → browse?ticket=, exports cookies into session."""
+    try:
+      from playwright.sync_api import sync_playwright
+    except ImportError:
+      raise AuthError("playwright not installed — run: pip install playwright "
+                      "&& playwright install chromium, or use --cookies.")
+    if not email or not password:
+      raise AuthError("browser login needs --email/--password or TI22_EMAIL/TI22_PASSWORD.")
+    with sync_playwright() as pw:
+      browser = pw.chromium.launch(headless=not headed)
+      ctx = browser.new_context(user_agent=UA)
+      page = ctx.new_page()
+      try:
+        page.goto(WATCH_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_url("**/login**", timeout=30000)
+        www_url = page.url
+        if debug:
+          print(f"debug-login: browser at {_debug_redact_url(www_url)} "
+                f"has_saml={'SAMLRequest=' in www_url}", file=sys.stderr)
+        page.fill('input[type="email"], input[name="email"]', email, timeout=15000)
+        page.fill('input[type="password"], input[name="password"]', password, timeout=15000)
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=60000):
+          page.click('button[type="submit"], input[type="submit"]', timeout=15000)
+        page.wait_for_url("**/browse**", timeout=60000)
+        html = page.content()
+        st = _debug_auth_state("browser browse auth", html, debug)
+        if not st.get("authed"):
+          raise AuthError("browser login did not reach authenticated browse "
+                          "(check creds / 2FA / CAPTCHA in headed mode with --headed).")
+        for c in ctx.cookies():
+          try:
+            session.cookies.set(c["name"], c["value"],
+                                domain=c.get("domain", ""),
+                                path=c.get("path", "/"))
+          except Exception:
+            pass
+        if debug:
+          names = sorted({c.name for c in session.cookies})
+          print(f"debug-login: browser harvest cookies={names}", file=sys.stderr)
+      finally:
+        try:
+          ctx.close()
+        except Exception:
+          pass
+        try:
+          browser.close()
+        except Exception:
+          pass
+    return session
+
+  def resolve_embed(self, session, watch_url, debug=False):
+    # Browsers send the LINKING page as Referer, never self. Self-referer
+    # renders the generic player variant without auth-user-token, so use
+    # /browse like a browse→click navigation.
+    headers = dict(WATCH_DOC_HEADERS)
+    headers["Referer"] = WATCH_BROWSE_URL
+    try:
+      r = session.get(watch_url, headers=headers, timeout=TIMEOUT)
+    except requests.RequestException as e:
+      fail(f"could not fetch watch page: {e}")
+    if r.status_code in (401, 403):
+      fail("watch page rejected — not logged in. Pass --email/--password or --cookies.")
+    if r.status_code != 200:
+      fail(f"watch page returned HTTP {r.status_code}.")
+    html = r.text
+    unesc = html.replace("&amp;", "&")
+    raw = re.findall(r'https://embed\.vhx\.tv/videos/\d+\?[^"\'\s<>\\]+', unesc)
+    frames = re.findall(r'<iframe[^>]+src="([^"]*embed\.vhx\.tv[^"]*)"',
+                        html, re.IGNORECASE | re.DOTALL)
+    cfg = re.findall(r'embed_url["\']?\s*:\s*["\']([^"\']*embed\.vhx\.tv[^"\']*)["\']',
+                     unesc)
+    bare_tok = re.search(
+      r'["\']auth[-_]user[-_]token["\']?\s*[:=]\s*["\']([^"\']{20,})["\']', html)
+    bare = bare_tok.group(1) if bare_tok else ""
+    low = html.lower()
+    iframe_count = len(re.findall(r'<iframe', html, re.IGNORECASE))
+    embed_var = "embed_url" in low and "embed.vhx.tv" in low
+    auth_markers = sum(low.count(m) for m in
+                       ("auth-user-token", "auth_user_token", "user_auth_token"))
+    has_window_token = "window.token" in low
+    seen = set()
+    cands = []
+    for u in raw + frames + cfg:
+      u = u.replace("&amp;", "&")
+      if u not in seen:
+        seen.add(u)
+        cands.append(u)
+    tok = [u for u in cands
+           if "auth-user-token" in u.lower() or "auth_user_token" in u.lower()]
+    if debug:
+      print(f"debug-login: watch page len={len(html)} referer={_debug_redact_url(headers['Referer'])} "
+            f"embed_candidates={len(cands)} tokenized={len(tok)} "
+            f"lengths={[len(u) for u in cands[:5]]} iframe_count={iframe_count} "
+            f"embed_url_var={embed_var} auth_markers={auth_markers} "
+            f"window_TOKEN={has_window_token} bare_token={bool(bare)}",
+            file=sys.stderr)
+    if tok:
+      tok.sort(key=len, reverse=True)
+      return tok[0]
+    if bare and cands:
+      # Token held separately from base URL (e.g. JS var) — join to longest base.
+      cands.sort(key=len, reverse=True)
+      base = cands[0]
+      sep = "&" if "?" in base else "?"
+      return f"{base}{sep}auth-user-token={bare}"
+    if cands:
+      # No tokenized URL found — the generic iframe 401s on fetch. Report it
+      # so the user can paste slug-page embed markers for the next fix.
+      print("note: no auth-user-token in slug embed URLs — trying longest candidate; "
+            "expect embed 401/403 if the site moved the token",
+            file=sys.stderr)
+      cands.sort(key=len, reverse=True)
+      return cands[0]
+    fail("could not find embed.vhx.tv iframe URL on watch page "
+         "(login expired or page format changed).")
+
+
+PROVIDERS = [StudyGatewayAuth()]
+
+
+def provider_for(url):
+  for p in PROVIDERS:
+    if p.match(url):
+      return p
+  return None
 
 
 def fail(msg, code=1):
@@ -402,29 +809,35 @@ def fetch_text(session, url):
   except requests.RequestException as e:
     fail(f"could not fetch embed page: {e}")
   if r.status_code in (401, 403):
-    fail("embed page rejected — auth-user-token expired. Re-paste a fresh iframe URL.")
+    fail("embed page rejected — session/token expired. Re-run to mint a fresh "
+         "embed URL via login (tokens are hours-lived, not for pasting).")
   if r.status_code != 200:
     fail(f"embed page returned HTTP {r.status_code}.")
   return r.text
 
 
 def resolve_config_url(session, input_url):
-  if "player.vimeo.com" in input_url and "/config" in input_url:
+  host = _host(input_url)
+  if host == "player.vimeo.com" and "/config" in (input_url or ""):
     return input_url, None, None
-  if "embed.vhx.tv" not in input_url:
-    fail("input must be an embed.vhx.tv URL or a player.vimeo.com config URL.")
-  html = fetch_text(session, input_url)
-  config_url, title, vid = extract_ottdata(html)
-  if not config_url:
-    fail("could not find window.OTTData.config_url in embed page "
-         "(token expired or page format changed).")
-  return config_url, title, vid
+  if host == "embed.vhx.tv":
+    html = fetch_text(session, input_url)
+    config_url, title, vid = extract_ottdata(html)
+    if not config_url:
+      fail("could not find window.OTTData.config_url in embed page "
+           "(token expired or page format changed).")
+    return config_url, title, vid
+  if host == "watch.studygateway.com":
+    fail("watch URL needs login first — this path should have been resolved "
+         "to an embed URL before resolve_config_url.")
+  fail("input must be a watch.studygateway.com URL, an embed.vhx.tv URL, "
+       "or a player.vimeo.com config URL.")
 
 
 def main(argv=None):
   ap = argparse.ArgumentParser(
     description="Download a single studygateway video to an MP4 file.")
-  ap.add_argument("input_url", help="embed.vhx.tv iframe URL or player.vimeo.com config URL")
+  ap.add_argument("input_url", help="watch.studygateway.com video URL, embed.vhx.tv iframe URL, or player.vimeo.com config URL")
   ap.add_argument("output_pos", nargs="?", default=None,
                   help="output MP4 path (shorthand for --output)")
   ap.add_argument("--list-qualities", action="store_true",
@@ -436,6 +849,17 @@ def main(argv=None):
                   help="parallel segment downloads (default 4)")
   ap.add_argument("--keep-intermediate", action="store_true",
                   help="keep video/audio intermediates and parts dir")
+  ap.add_argument("--email", default=None, help="login email (or TI22_EMAIL)")
+  ap.add_argument("--password", default=None, help="login password (or TI22_PASSWORD)")
+  ap.add_argument("--cookies", default=None, help="Netscape cookies.txt fallback for bot-blocked login (export logged-in browser cookies for .studygateway.com)")
+  ap.add_argument("--login-only", action="store_true",
+                  help="login + resolve embed URL, print it, and exit")
+  ap.add_argument("--debug-login", action="store_true",
+                  help="print redacted login diagnostics (urls, parse flags, cookies, challenge hits)")
+  ap.add_argument("--use-browser-login", action="store_true",
+                  help="real Chromium login via Playwright (passes reCAPTCHA v3); exports cookies to pipeline")
+  ap.add_argument("--headed", action="store_true",
+                  help="show browser window with --use-browser-login (debug 2FA/CAPTCHA)")
   args = ap.parse_args(argv)
   if args.output and args.output_pos and args.output != args.output_pos:
     fail("pass the output path either positionally or via --output, not both.")
@@ -444,7 +868,40 @@ def main(argv=None):
   session = requests.Session()
   session.headers.update({"User-Agent": UA})
 
-  config_url, title, _vid = resolve_config_url(session, args.input_url)
+  if args.cookies:
+    try:
+      load_cookies(session, args.cookies)
+    except AuthError as e:
+      fail(str(e))
+
+  input_url = args.input_url
+  prov = provider_for(input_url)
+  if prov is not None:
+    if args.cookies and not args.use_browser_login:
+      print("note: using --cookies session, skipping password login", file=sys.stderr)
+    else:
+      email, password = get_creds(args)
+      try:
+        if args.use_browser_login:
+          prov.browser_login(session, email, password,
+                             debug=args.debug_login, headed=args.headed)
+        else:
+          prov.login(session, email, password, debug=args.debug_login)
+      except AuthError as e:
+        fail(f"{e}")
+      print("login ok", file=sys.stderr)
+    try:
+      input_url = prov.resolve_embed(session, args.input_url, debug=args.debug_login)
+    except SystemExit:
+      raise
+    except Exception as e:
+      fail(f"could not resolve embed URL: {e}")
+    print(f"embed: {input_url}", file=sys.stderr)
+    if args.login_only:
+      print(input_url)
+      return 0
+
+  config_url, title, _vid = resolve_config_url(session, input_url)
   config = fetch_json(session, config_url, "player config")
   playlist_url, fallback_url, qmap = pick_playlist_url(config)
 
