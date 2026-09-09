@@ -337,7 +337,7 @@ class StudyGatewayAuth(AuthProvider):
     """Playwright harvester: real Chromium passes reCAPTCHA v3 natively,
     follows saml/consume → browse?ticket=, exports cookies into session."""
     try:
-      from playwright.sync_api import sync_playwright
+      from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
     except ImportError:
       raise AuthError("playwright not installed — run: pip install playwright "
                       "&& playwright install chromium, or use --cookies.")
@@ -348,17 +348,41 @@ class StudyGatewayAuth(AuthProvider):
       ctx = browser.new_context(user_agent=UA)
       page = ctx.new_page()
       try:
-        page.goto(WATCH_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_url("**/login**", timeout=30000)
+        try:
+          page.goto(WATCH_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+          page.wait_for_url("**/login**", timeout=30000)
+        except PwTimeout:
+          raise AuthError("browser login timed out reaching the login page "
+                          "(site/Cloudflare slow?) — retry, or add --headed to watch.")
         www_url = page.url
         if debug:
           print(f"debug-login: browser at {_debug_redact_url(www_url)} "
                 f"has_saml={'SAMLRequest=' in www_url}", file=sys.stderr)
-        page.fill('input[type="email"], input[name="email"]', email, timeout=15000)
-        page.fill('input[type="password"], input[name="password"]', password, timeout=15000)
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=60000):
+        try:
+          page.fill('input[type="email"], input[name="email"]', email, timeout=15000)
+          page.fill('input[type="password"], input[name="password"]', password, timeout=15000)
           page.click('button[type="submit"], input[type="submit"]', timeout=15000)
-        page.wait_for_url("**/browse**", timeout=60000)
+        except PwTimeout:
+          raise AuthError("browser login could not fill/submit the login form "
+                          "(page format changed?) — retry with --headed to watch.")
+        # Do NOT use expect_navigation: wrong creds / slow Cloudflare / JS
+        # SAML auto-post may never fire a navigation, which surfaced as a raw
+        # TimeoutError traceback. Poll for the browse URL instead.
+        try:
+          page.wait_for_url("**/browse**", timeout=90000)
+        except PwTimeout:
+          cur = page.url
+          if "/login" in cur:
+            try:
+              body = (page.content() or "").lower()
+            except Exception:
+              body = ""
+            hint = ("check email/password" if ("invalid" in body or "incorrect" in body
+                    or "try again" in body) else "check creds / 2FA / CAPTCHA")
+            raise AuthError(f"browser login timed out staying on the login page "
+                            f"({hint}; retry with --headed to watch).")
+          raise AuthError(f"browser login timed out at {_debug_redact_url(cur)} — "
+                          "site/Cloudflare slow? Retry, or add --headed to watch.")
         html = page.content()
         st = _debug_auth_state("browser browse auth", html, debug)
         if not st.get("authed"):
