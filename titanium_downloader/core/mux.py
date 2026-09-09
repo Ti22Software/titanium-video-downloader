@@ -1,18 +1,16 @@
 """ffmpeg mux with progress parsing + binary resolution."""
 
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 from ..extractors.base import fail
+from .paths import ffmpeg_path
 
 
-def mux(video_path, audio_path, out_path, total_duration=None):
-  ff = shutil.which("ffmpeg")
-  if not ff:
-    fail("ffmpeg not found in PATH.")
+def mux(video_path, audio_path, out_path, total_duration=None, ffmpeg=None):
+  ff = ffmpeg_path(ffmpeg)
   out_path = Path(out_path)
   print(f"\nMuxing -> {out_path.resolve()}", file=sys.stderr)
   cmd = [ff, "-y", "-v", "error", "-nostats",

@@ -179,10 +179,12 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
   - macOS → GitHub Actions `macos-latest` (no Mac owned; cloud Mac closes it).
 - **Platform order: Windows first**, macOS second, Linux last
   (`pipx install` covers Linux users without any exe).
-- **ffmpeg: bundle it** (version control + zero setup). Lean:
-  `imageio-ffmpeg` (versioned static builds per OS) with system-ffmpeg
-  fallback and a `--ffmpeg-path` override. Mux module resolves the binary
-  at runtime instead of assuming PATH.
+- **ffmpeg: bundled** via `imageio-ffmpeg==0.6.0` (ffmpeg 7.0.2-static,
+  optional `ffmpeg` extra, installed by default in our envs/CI/bundles).
+  Resolution order in `core/paths.py::ffmpeg_path()`: `--ffmpeg-path` >
+  imageio-ffmpeg extra > system PATH. `-c copy` remuxes verified
+  content-equivalent across system 6.1.1 and bundled 7.0.2 (stream specs
+  identical, 1-byte container delta, null-decode clean).
 - **Signing: deferred.** Expect SmartScreen/Gatekeeper warnings until
   Windows cert + Apple Developer ID are wired into CI as secrets.
 - **CI matrix** (acceptance criterion of Phase 1): one workflow ×
@@ -206,7 +208,8 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
 
 ## Conventions
 
-- 2-space indent, stdlib + `requests` (+ optional `tqdm`) only.
+- 2-space indent, stdlib + `requests` (+ optional `tqdm`, `playwright`
+  via `browser` extra, `imageio-ffmpeg` via `ffmpeg` extra).
 - Verify offline first (stubbed network, generated ffmpeg fixtures);
   live runs need fresh pasted URLs (60s config window).
 - Git allowlist: only `ti22_dl.py`, `ARCHITECTURE.md`

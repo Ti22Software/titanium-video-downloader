@@ -89,6 +89,8 @@ def main(argv=None):
                   help="list renditions as a JSON array (front-end integration) and exit")
   ap.add_argument("--pick", action="store_true",
                   help="interactively pick a quality from the list, then download")
+  ap.add_argument("--ffmpeg-path", default=None,
+                  help="explicit ffmpeg binary (default: imageio-ffmpeg extra, then PATH)")
   ap.add_argument("--quality", default="best",
                   help="height label (1080p/720p/540p/360p/240p), 'best', or rendition id prefix")
   ap.add_argument("--output", "-o", default=None, help="output MP4 path")
@@ -240,7 +242,8 @@ def main(argv=None):
         file=sys.stderr)
   v_path = download_rendition("video", video, v_urls, workdir, session, args.concurrency)
   a_path = download_rendition("audio", audio, a_urls, workdir, session, args.concurrency)
-  mux(v_path, a_path, out_path, total_duration=video.get("duration"))
+  mux(v_path, a_path, out_path, total_duration=video.get("duration"),
+      ffmpeg=args.ffmpeg_path)
   if not args.keep_intermediate:
     shutil.rmtree(workdir, ignore_errors=True)
   print(str(out_path))

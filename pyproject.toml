@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 browser = ["playwright"]
+ffmpeg = ["imageio-ffmpeg==0.6.0"]
 test = ["pytest"]
 
 [project.scripts]
