@@ -5,3 +5,12 @@
 !ARCHITECTURE.md
 !.gitignore
 !.python-version
+!pyproject.toml
+!titanium_downloader/
+!titanium_downloader/**
+!tests/
+!tests/**
+# Regenerable / local-only (re-excluded after the allowlist above).
+__pycache__/
+*.py[cod]
+.venv/
