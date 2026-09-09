@@ -91,3 +91,39 @@ def select_audio(audios):
 def resolve_segments(playlist_url, rendition):
   base = urljoin(playlist_url, rendition["base_url"])
   return [urljoin(base, s["url"]) for s in rendition["segments"]]
+
+
+def order_by_height(videos):
+  """Height-desc ordering shared by the table, JSON, and --pick list."""
+  return sorted(videos, key=lambda v: v.get("height") or 0, reverse=True)
+
+
+def quality_items(videos, qmap):
+  """Machine-readable rendition rows for --list-qualities-json."""
+  items = []
+  for v in order_by_height(videos):
+    total = sum(s.get("size", 0) for s in v["segments"])
+    items.append({
+      "id": v.get("id"),
+      "quality": qmap.get(v["id"], label_for(v)),
+      "width": v.get("width"),
+      "height": v.get("height"),
+      "bitrate": v.get("bitrate") or 0,
+      "size": total,
+      "codecs": v.get("codecs"),
+    })
+  return items
+
+
+def pick_index(n, raw):
+  """Parse a 1-based --pick choice ("" means default 1), or fail()."""
+  text = (raw or "").strip()
+  if text == "":
+    return 1
+  try:
+    idx = int(text)
+  except ValueError:
+    fail(f"invalid pick '{text}' (enter 1-{n}).")
+  if not 1 <= idx <= n:
+    fail(f"pick {idx} out of range (1-{n}).")
+  return idx

@@ -4,6 +4,7 @@ Event bus (GUI prerequisite) is explicitly deferred — see ARCHITECTURE.md.
 """
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -15,7 +16,10 @@ from .core.fetcher import download_rendition, fetch_json
 from .core.models import (
   audio_label,
   label_for,
+  order_by_height,
   parse_playlist,
+  pick_index,
+  quality_items,
   resolve_segments,
   select_audio,
   select_video,
@@ -81,6 +85,10 @@ def main(argv=None):
                   help="output MP4 path (shorthand for --output)")
   ap.add_argument("--list-qualities", action="store_true",
                   help="list available renditions and exit")
+  ap.add_argument("--list-qualities-json", action="store_true",
+                  help="list renditions as a JSON array (front-end integration) and exit")
+  ap.add_argument("--pick", action="store_true",
+                  help="interactively pick a quality from the list, then download")
   ap.add_argument("--quality", default="best",
                   help="height label (1080p/720p/540p/360p/240p), 'best', or rendition id prefix")
   ap.add_argument("--output", "-o", default=None, help="output MP4 path")
@@ -104,6 +112,10 @@ def main(argv=None):
   args = ap.parse_args(argv)
   if args.output and args.output_pos and args.output != args.output_pos:
     fail("pass the output path either positionally or via --output, not both.")
+  if args.pick and (args.quality != "best" or args.list_qualities
+                    or args.list_qualities_json):
+    fail("--pick is mutually exclusive with "
+         "--quality/--list-qualities/--list-qualities-json.")
   output_arg = args.output or args.output_pos
 
   session = new_session()
@@ -176,13 +188,30 @@ def main(argv=None):
 
   if args.list_qualities:
     print(f"{'quality':<8}{'size':>10}  {'bitrate':>9}  id")
-    for v in sorted(videos, key=lambda v: v.get("height") or 0, reverse=True):
+    for v in order_by_height(videos):
       total = sum(s.get("size", 0) for s in v["segments"])
       q = qmap.get(v["id"], label_for(v))
       print(f"{q:<8}{total / 1e6:>9.1f}M  {v['bitrate']:>9}  {v['id']}")
     return 0
 
-  video = select_video(videos, args.quality)
+  if args.list_qualities_json:
+    print(json.dumps(quality_items(videos, qmap), indent=2))
+    return 0
+
+  if args.pick:
+    if not sys.stdin.isatty():
+      fail("--pick needs an interactive terminal.")
+    ordered = order_by_height(videos)
+    for i, v in enumerate(ordered, 1):
+      total = sum(s.get("size", 0) for s in v["segments"])
+      q = qmap.get(v["id"], label_for(v))
+      print(f"  [{i}] {q:<8}{total / 1e6:>9.1f}M  {v['bitrate']:>9}  {v['id']}",
+            file=sys.stderr)
+    sys.stderr.write(f"pick quality [1-{len(ordered)}] (default 1): ")
+    sys.stderr.flush()
+    video = ordered[pick_index(len(ordered), sys.stdin.readline())]
+  else:
+    video = select_video(videos, args.quality)
   audio = select_audio(audios)
   v_urls = resolve_segments(playlist_url, video)
   a_urls = resolve_segments(playlist_url, audio)
