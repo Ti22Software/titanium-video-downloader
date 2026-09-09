@@ -10,6 +10,7 @@ from pathlib import Path
 
 import requests
 
+from .core.envfile import load_dotenv
 from .core.fetcher import download_rendition, fetch_json
 from .core.models import (
   audio_label,
@@ -72,6 +73,7 @@ def _auth_mode(args, prov):
 
 
 def main(argv=None):
+  load_dotenv()  # ./.env, then <config-dir>/.env; real env always wins
   ap = argparse.ArgumentParser(
     description="Download a single studygateway video to an MP4 file.")
   ap.add_argument("input_url", help="watch.studygateway.com video URL, embed.vhx.tv iframe URL, or player.vimeo.com config URL")
@@ -126,7 +128,10 @@ def main(argv=None):
       if mode == "browser" and args.cookies:
         print("note: --cookies ignored with --use-browser-login (browser session wins)",
               file=sys.stderr)
-      email, password = get_creds(args)
+      email, password, cred_source = get_creds(args, prov.site_key)
+      if args.debug_login:
+        print(f"debug-login: cred_source={cred_source} site={prov.site_key}",
+              file=sys.stderr)
       try:
         if mode == "browser":
           prov.browser_login(session, email, password,
