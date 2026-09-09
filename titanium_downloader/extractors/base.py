@@ -105,7 +105,15 @@ def _debug_login_state(label, html=None, url=None, status=None, session=None):
 
 
 class AuthProvider:
-  """Pluggable site auth: match(url) / login(session, creds) / resolve_embed()."""
+  """Pluggable site auth: match(url) / login(session, creds) / resolve_embed().
+
+  site_key drives per-site env names (TI22_<SITE>_EMAIL) and debug labels.
+  requires_auth gates --no-auth: sites that mint tokens server-side must
+  refuse tokenless runs fail-fast instead of 401ing downstream.
+  """
+
+  site_key = "generic"
+  requires_auth = True
 
   def match(self, url):
     raise NotImplementedError

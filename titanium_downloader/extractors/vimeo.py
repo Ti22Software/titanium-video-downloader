@@ -10,6 +10,9 @@ from .base import AuthError, AuthProvider, _host
 class VimeoAuth(AuthProvider):
   """Public Vimeo: match real, login is a no-op, resolve waits for Phase 2a."""
 
+  site_key = "vimeo"
+  requires_auth = False
+
   def match(self, url):
     # Watch pages only: player.vimeo.com/config URLs are a downstream
     # artifact handled by resolve_config_url, and must bypass providers.

@@ -11,6 +11,9 @@ from .base import AuthError, AuthProvider
 class GenericAuth(AuthProvider):
   """Fallback slot: never matches yet, everything else unimplemented."""
 
+  site_key = "generic"
+  requires_auth = True
+
   def match(self, url):
     return False
 

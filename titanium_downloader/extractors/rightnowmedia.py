@@ -12,6 +12,9 @@ from .base import AuthError, AuthProvider, _host
 class RightNowMediaAuth(AuthProvider):
   """RightNow Media: match real, everything else waits for the probe."""
 
+  site_key = "rightnowmedia"
+  requires_auth = True
+
   def match(self, url):
     return "rightnowmedia" in _host(url)
 

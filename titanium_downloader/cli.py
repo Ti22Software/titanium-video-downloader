@@ -40,6 +40,37 @@ register_provider(RightNowMediaAuth())
 register_provider(GenericAuth())
 
 
+def _env_creds_present(site_key):
+  """True if any credential env (site-scoped or generic) is configured."""
+  import os
+  key = (site_key or "").upper()
+  names = ["TI22_EMAIL", "TI22_PASSWORD"]
+  if key:
+    names += [f"TI22_{key}_EMAIL", f"TI22_{key}_PASSWORD"]
+  return any(os.environ.get(n) for n in names)
+
+
+def _auth_mode(args, prov):
+  """Return 'none'|'cookies'|'browser'|'password', or fail() on conflicts.
+
+  Pure decision helper (no I/O) so the matrix is unit-testable.
+  """
+  if args.no_auth:
+    for opt in ("email", "password", "cookies", "use_browser_login"):
+      if getattr(args, opt):
+        fail(f"--no-auth conflicts with --{opt.replace('_', '-')}.")
+    if prov.requires_auth:
+      site = prov.site_key.upper()
+      fail(f"{prov.site_key} requires auth — omit --no-auth or pass "
+           f"--email/--password (TI22_{site}_EMAIL).")
+    return "none"
+  if args.cookies and not args.use_browser_login:
+    return "cookies"
+  if args.use_browser_login:
+    return "browser"
+  return "password"
+
+
 def main(argv=None):
   ap = argparse.ArgumentParser(
     description="Download a single studygateway video to an MP4 file.")
@@ -66,6 +97,8 @@ def main(argv=None):
                   help="real Chromium login via Playwright (passes reCAPTCHA v3); exports cookies to pipeline")
   ap.add_argument("--headed", action="store_true",
                   help="show browser window with --use-browser-login (debug 2FA/CAPTCHA)")
+  ap.add_argument("--no-auth", action="store_true",
+                  help="skip login entirely (only sites with requires_auth=False, e.g. public vimeo)")
   args = ap.parse_args(argv)
   if args.output and args.output_pos and args.output != args.output_pos:
     fail("pass the output path either positionally or via --output, not both.")
@@ -82,12 +115,20 @@ def main(argv=None):
   input_url = args.input_url
   prov = provider_for(input_url)
   if prov is not None:
-    if args.cookies and not args.use_browser_login:
+    mode = _auth_mode(args, prov)
+    if mode == "none":
+      if _env_creds_present(prov.site_key):
+        print("note: ignoring configured credentials due to --no-auth", file=sys.stderr)
+      print(f"note: --no-auth accepted for {prov.site_key}, skipping login", file=sys.stderr)
+    elif mode == "cookies":
       print("note: using --cookies session, skipping password login", file=sys.stderr)
     else:
+      if mode == "browser" and args.cookies:
+        print("note: --cookies ignored with --use-browser-login (browser session wins)",
+              file=sys.stderr)
       email, password = get_creds(args)
       try:
-        if args.use_browser_login:
+        if mode == "browser":
           prov.browser_login(session, email, password,
                              debug=args.debug_login, headed=args.headed)
         else:

@@ -40,6 +40,9 @@ from .base import (
 class StudyGatewayAuth(AuthProvider):
   """Happy-path SAML form login for studygateway (requests-only, no JS)."""
 
+  site_key = "studygateway"
+  requires_auth = True
+
   def match(self, url):
     return _host(url) == "watch.studygateway.com"
 
