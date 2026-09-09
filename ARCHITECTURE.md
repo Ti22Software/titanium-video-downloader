@@ -59,16 +59,22 @@ natively; needs `pip install playwright && playwright install chromium`),
 is kept for plumbing/tests but rejected live by reCAPTCHA — no solver.
 See Phase 3.
 
-### Current module layout (`ti22_dl.py`, ~500 lines)
+### Current module layout (`titanium_downloader/` package, v0.1.0)
 
-| Area | Functions |
-| ---- | --------- |
-| Resolve | `resolve_config_url`, `extract_ottdata`, `fetch_text` |
-| Config/playlist | `fetch_json`, `pick_playlist_url`, `parse_playlist` |
-| Selection | `select_video`, `select_audio`, `label_for`, `audio_label` |
-| Fetch | `_get_with_retry`, `download_rendition` (threads, manifest resume) |
-| Mux | `mux` (ffmpeg `-progress` parsing) |
-| Output | same-line `\r` progress + ETA (stdlib fallback; tqdm branch kept), `sanitize`/`sanitize_path` |
+Phase 1 package move done: verbatim code motion, prints intact (event bus
+deferred), `ti22_dl.py` kept as a thin shim. 28 offline pytest tests green.
+
+| Area | Module | Contents |
+| ---- | ------ | -------- |
+| Auth plumbing | `extractors/base.py` | `AuthError`, `fail`, `AuthProvider` ABC, provider registry, host/hidden-input/challenge/marker helpers + redacted debug |
+| StudyGateway | `extractors/studygateway.py` | `StudyGatewayAuth` (SAML + Playwright harvester + embed resolve), `extract_ottdata`, `pick_playlist_url`, `resolve_config_url` |
+| Stubs | `extractors/vimeo.py`, `rightnowmedia.py`, `generic.py` | Real `match()` (vimeo: watch pages only — config URLs bypass to `resolve_config_url`), `NotImplementedError` elsewhere |
+| Session | `core/session.py` | UA/headers/timeouts, `new_session`, `get_creds`, `load_cookies` |
+| Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments` |
+| Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume) |
+| Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing) |
+| Naming | `core/naming.py` | `sanitize`/`sanitize_path` |
+| CLI | `cli.py` | argparse front-end + orchestration; entry points `ti22-dl` script + `__main__.py` |
 
 Key behaviors: AAC preferred over Opus; CDN fallback (`akfire` →
 `fastly_skyfire`); resume via `.ti22/` manifest (deletes on success unless
@@ -132,10 +138,11 @@ out-of-process (spawn + parse JSONL) stay open via this one mechanism.
 
 | Site | Status | Notes |
 | ---- | ------ | ----- |
-| studygateway (VHX OTT) | ✅ working | Needs Phase 3 login automation (hop 1) |
-| Vimeo public | planned (Phase 2a) | Reuse config→playlist path; no-auth resolve from public player page |
-| YouTube | planned (Phase 2b) | Hand-rolled player-response + signature cipher; cipher changes = ongoing maintenance, isolated in one tested module |
-| Unknown (login, ex-OBS) | slot only (Phase 3) | **Blocked on DRM probe first** — see Risks |
+| studygateway (VHX OTT) | ✅ working | Browser SAML login + tokenized embed (Phase 3 done, v0.1.0 package) |
+| Vimeo public | stub (Phase 2a) | `vimeo.py` claims watch pages; reuse config→playlist path; no-auth resolve from public player page |
+| RightNow Media | stub only | Login-required; UNVERIFIED similarity-to-StudyGateway hypothesis; needs login-flow + DRM probe before implementation |
+| Unknown (login, ex-OBS) | slot only (`generic.py`) | **Blocked on DRM probe first** — see Risks |
+| YouTube | deferred (no module) | Hand-rolled player-response + signature cipher if revived; cipher changes = ongoing maintenance, isolated in one tested module |
 
 ### Phase 0 probe (owner, ~30 min, unblocks Phase 3)
 
