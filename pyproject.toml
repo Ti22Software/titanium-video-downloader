@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "titanium-video-downloader"
 version = "0.1.0"
-description = "Single-file-first streaming video downloader with pluggable site extractors (CLI first)"
+description = "Streaming video downloader with pluggable site extractors (CLI first)"
 requires-python = "==3.12.*"
 dependencies = [
   "requests",
