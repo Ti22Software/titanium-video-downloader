@@ -1,6 +1,7 @@
 """Offline tests: ffmpeg_path() precedence (no real binaries executed)."""
 
 import os
+import subprocess
 import sys
 
 import pytest
@@ -164,3 +165,59 @@ def test_remux_final_failure_prints_no_retry_note(tmp_path, monkeypatch, capsys)
   err = capsys.readouterr().err
   assert err.count("retrying with system ffmpeg") == 1
   assert "tail-err" in err
+
+
+def test_mux_detaches_stdin(tmp_path, monkeypatch):
+  """ffmpeg must never hold the user's tty: a crash would otherwise leave
+  echo disabled (invisible typing until `reset`)."""
+  from titanium_downloader.core import mux as mux_mod
+  seen = {}
+
+  class _Out:
+    def __iter__(self):
+      return iter([])
+
+    def close(self):
+      pass
+
+  class _Err:
+    def read(self):
+      return ""
+
+    def close(self):
+      pass
+
+  class _Proc:
+    def __init__(self, **kw):
+      seen.update(kw)
+      self.stdout = _Out()
+      self.stderr = _Err()
+
+    def wait(self):
+      return 0
+
+  monkeypatch.setattr(mux_mod.subprocess, "Popen", lambda *a, **k: _Proc(**k))
+  mux_mod.mux(tmp_path / "v.mp4", tmp_path / "a.m4a", tmp_path / "out.mp4")
+  assert seen.get("stdin") == subprocess.DEVNULL
+
+
+def test_remux_detaches_stdin(tmp_path, monkeypatch):
+  from titanium_downloader.core import mux as mux_mod
+  parts = tmp_path / "video"
+  parts.mkdir()
+  (parts / "00000.ts").write_bytes(b"fake")
+  seen = {}
+
+  class _Proc:
+    returncode = 0
+    stderr = ""
+
+  def _run(cmd, **kw):
+    seen.update(kw)
+    return _Proc()
+
+  monkeypatch.setattr(mux_mod.subprocess, "run", _run)
+  monkeypatch.setattr(mux_mod.shutil, "which", lambda _: None)
+  monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
+  mux_mod.remux_concat(parts, tmp_path / "out.mp4")
+  assert seen.get("stdin") == subprocess.DEVNULL

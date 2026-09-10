@@ -28,8 +28,13 @@ def mux(video_path, audio_path, out_path, total_duration=None, ffmpeg=None):
     sys.stderr.write("\r" + text.ljust(max_width[0]))
     sys.stderr.flush()
 
+  # stdin=DEVNULL: ffmpeg must never hold the user's tty. It enables
+  # interactive mode on tty stdin and restores termios only on clean exit;
+  # a crash (e.g. segfault) would otherwise leave echo disabled, hiding
+  # all typed input until `reset`. Progress already comes via pipe:1.
   proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, text=True)
+                          stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                          text=True)
   try:
     for line in proc.stdout:
       line = line.strip()
@@ -99,7 +104,10 @@ def remux_concat(parts_dir, out_path, ffmpeg=None):
     cmd = [cand, "-y", "-v", "error", "-nostats",
            "-f", "concat", "-safe", "0", "-i", str(lst),
            "-c", "copy", "-movflags", "+faststart", str(out_path)]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # stdin=DEVNULL: see mux() above — a crashing ffmpeg must not keep
+    # the tty (same echo-off terminal breakage, same one-line cure).
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          stdin=subprocess.DEVNULL, text=True)
     if proc.returncode == 0:
       return out_path
     last_err = (proc.stderr or "")[-3000:]
