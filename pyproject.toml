@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "titanium-downloader"
+name = "titanium-video-downloader"
 version = "0.1.0"
 description = "Single-file-first streaming video downloader with pluggable site extractors (CLI first)"
 requires-python = "==3.12.*"
@@ -18,11 +18,11 @@ ffmpeg = ["imageio-ffmpeg==0.6.0"]
 test = ["pytest"]
 
 [project.scripts]
-ti22-dl = "titanium_downloader.cli:main"
+ti22-video-dl = "titanium_video_downloader.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["titanium_downloader*"]
+include = ["titanium_video_downloader*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,13 +1,13 @@
 # Ignore everything by default; only tracked files are allowlisted below.
 *
 # Allowlist: commit these.
-!ti22_dl.py
+!ti22_video_dl.py
 !ARCHITECTURE.md
 !.gitignore
 !.python-version
 !pyproject.toml
-!titanium_downloader/
-!titanium_downloader/**
+!titanium_video_downloader/
+!titanium_video_downloader/**
 !tests/
 !tests/**
 # Regenerable / local-only (re-excluded after the allowlist above).

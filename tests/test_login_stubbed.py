@@ -2,8 +2,8 @@
 
 import pytest
 
-from titanium_downloader.extractors.base import AuthError
-from titanium_downloader.extractors.studygateway import StudyGatewayAuth
+from titanium_video_downloader.extractors.base import AuthError
+from titanium_video_downloader.extractors.studygateway import StudyGatewayAuth
 
 
 class _Resp:

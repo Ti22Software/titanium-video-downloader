@@ -3,14 +3,14 @@
 import argparse
 from pathlib import Path
 
-from titanium_downloader.core import envfile
-from titanium_downloader.core.envfile import (
+from titanium_video_downloader.core import envfile
+from titanium_video_downloader.core.envfile import (
   default_config_dir,
   find_dotenv,
   load_dotenv,
   parse_dotenv_text,
 )
-from titanium_downloader.core.session import get_creds
+from titanium_video_downloader.core.session import get_creds
 
 
 def test_parse_basic_and_quotes():
@@ -57,9 +57,9 @@ def test_default_config_dir_vendor_layout(monkeypatch):
   monkeypatch.delenv("TI22_CONFIG_DIR", raising=False)
   d = default_config_dir()
   if os.name == "nt":
-    assert d.parts[-2:] == ("titanium-software", "ti22-dl")
+    assert d.parts[-2:] == ("titanium-software", "ti22-video-dl")
   else:
-    assert d == Path.home() / ".config" / "titanium-software" / "ti22-dl"
+    assert d == Path.home() / ".config" / "titanium-software" / "ti22-video-dl"
 
 
 def test_find_dotenv_prefers_cwd(monkeypatch, tmp_path):

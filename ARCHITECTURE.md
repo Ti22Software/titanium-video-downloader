@@ -1,12 +1,12 @@
-# Titanium Downloader — Architecture (living doc)
+# Titanium Video Downloader — Architecture (living doc)
 
 Single-file-first streaming video downloader, growing into a multi-site,
 GUI-capable app with downloadable executables for non-tech users.
-Release binary name: `ti22-dl` (`ti22-dl.exe` on Windows).
+Release binary name: `ti22-video-dl` (`ti22-video-dl.exe` on Windows).
 
 ## Current state (verified working)
 
-`ti22_dl.py` downloads one studygateway video end-to-end: watch slug, embed,
+`ti22_video_dl.py` downloads one studygateway video end-to-end: watch slug, embed,
 or config URL in, muxed 1080p MP4 out. Verified against a live ~800MB download
 (ffprobe specs, null-decode, VLC playback, md5-determinism across runs).
 Happy-path SAML plumbing verified live (302 → SAMLRequest → POST → browse),
@@ -65,8 +65,8 @@ Credentials (precedence: flags > site env > generic env > tty prompt):
 `--email/--password`, `TI22_<SITE>_EMAIL/PASSWORD` (`TI22_STUDYGATEWAY_EMAIL`,
 `TI22_VIMEO_EMAIL`, `TI22_RIGHTNOWMEDIA_EMAIL`, `TI22_GENERIC_EMAIL`),
 `TI22_EMAIL/PASSWORD` fallback. Optional `.env` (`./.env`, then
-`~/.config/titanium-software/ti22-dl/.env`,
-`%APPDATA%/titanium-software/ti22-dl/.env`, overridable via
+`~/.config/titanium-software/ti22-video-dl/.env`,
+`%APPDATA%/titanium-software/ti22-video-dl/.env`, overridable via
 `TI22_CONFIG_DIR`): flat stdlib-parsed `KEY=VALUE`, real env always wins.
 
 Quality selection: `--quality` (label/`best`/id-prefix, default `best`),
@@ -77,10 +77,10 @@ the normal download path; mutually exclusive with the other three).
 `select_audio()` rendition (container `moov` overhead excluded); JSON also
 carries `video_size`/`audio_size` breakdown keys.
 
-### Current module layout (`titanium_downloader/` package, v0.1.0)
+### Current module layout (`titanium_video_downloader/` package, v0.1.0)
 
 Phase 1 package move done: verbatim code motion, prints intact (event bus
-deferred), `ti22_dl.py` kept as a thin shim. 43 offline pytest tests green
+deferred), `ti22_video_dl.py` kept as a thin shim. 43 offline pytest tests green
 (naming, selection, parsers, auth markers, stubbed login, env/no-auth/quality).
 
 | Area | Module | Contents |
@@ -91,12 +91,12 @@ deferred), `ti22_dl.py` kept as a thin shim. 43 offline pytest tests green
 | Stubs | `extractors/rightnowmedia.py`, `generic.py` | Real `match()`, `NotImplementedError` elsewhere |
 | Rumble public | `extractors/rumble.py` | `RumbleAuth` (watch→key→embedJS, muxed-HLS renditions, browser bootstrap for gated origin fetches, live/DRM gates); sizes nominal `meta` bytes (upper bound — VBR content lands lower); future: direct-ffmpeg HLS option for speed-over-progress users |
 | Session | `core/session.py` | UA/headers/timeouts, `new_session`, per-site `get_creds`, `load_cookies` |
-| Env file | `core/envfile.py` | stdlib `.env` loader (flat `KEY=VALUE`), `titanium-software/ti22-dl` defaults |
+| Env file | `core/envfile.py` | stdlib `.env` loader (flat `KEY=VALUE`), `titanium-software/ti22-video-dl` defaults |
 | Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments`, `order_by_height`, `quality_items`, `pick_index` |
 | Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
 | Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static segfaults in mpegts demux on some files, upstream report TODO) |
 | Naming | `core/naming.py` | `sanitize`/`sanitize_path` |
-| CLI | `cli.py` | argparse front-end + orchestration; entry points `ti22-dl` script + `__main__.py` |
+| CLI | `cli.py` | argparse front-end + orchestration; entry points `ti22-video-dl` script + `__main__.py` |
 
 Key behaviors: AAC preferred over Opus; CDN fallback (`akfire` →
 `fastly_skyfire`); resume via `.ti22/` manifest (deletes on success unless
@@ -106,8 +106,8 @@ Key behaviors: AAC preferred over Opus; CDN fallback (`akfire` →
 ## Target architecture (Phase 1: package + events)
 
 ```
-titanium-downloader/          # distribution name (pip/website); import package below
-  titanium_downloader/        # import package (hyphens are not importable,
+titanium-video-downloader/          # distribution name (pip/website); import package below
+  titanium_video_downloader/        # import package (hyphens are not importable,
                               # so the distribution/readable name and the
                               # import name differ by design)
     core/
@@ -126,8 +126,8 @@ titanium-downloader/          # distribution name (pip/website); import package 
     cli.py           # argparse front-end (current flags), renders events as today's UI
 ```
 
-`ti22_dl.py` remains as a thin shim during transition, then retires.
-Console-script / PyInstaller binary name: `ti22-dl` (`ti22-dl.exe`).
+`ti22_video_dl.py` remains as a thin shim during transition, then retires.
+Console-script / PyInstaller binary name: `ti22-video-dl` (`ti22-video-dl.exe`).
 
 ### Decisions (locked)
 
@@ -197,8 +197,8 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
   `[windows, ubuntu, macos]` runners → native exe each → smoke-test the
   *bundle* (`--help` + offline parser tests) → attach to GitHub Release on
   tags. Local builds stay for fast iteration.
-- **Phase 1 packaging checklist**: `titanium_downloader.cli:main` +
-  `__main__.py` entry points, release binary `ti22-dl`; no hidden dynamic
+- **Phase 1 packaging checklist**: `titanium_video_downloader.cli:main` +
+  `__main__.py` entry points, release binary `ti22-video-dl`; no hidden dynamic
   imports (declare `hiddenimports`); no `__file__`-relative paths
   (`importlib.resources` only); tiny dep surface (`requests` + stdlib +
   optional `tqdm`).
@@ -218,7 +218,7 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
   via `browser` extra, `imageio-ffmpeg` via `ffmpeg` extra).
 - Verify offline first (stubbed network, generated ffmpeg fixtures);
   live runs need fresh pasted URLs (60s config window).
-- Git allowlist: only `ti22_dl.py`, `ARCHITECTURE.md`
+- Git allowlist: only `ti22_video_dl.py`, `ARCHITECTURE.md`
   (+ packaging files as added) are tracked; `.env`, media, fixtures,
   workdirs stay ignored. Never commit secrets.
 - This file is the decision log — update it when a status above changes.

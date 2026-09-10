@@ -4,10 +4,10 @@ import argparse
 
 import pytest
 
-from titanium_downloader import cli  # noqa: F401  (registers providers)
-from titanium_downloader.cli import _auth_mode
-from titanium_downloader.extractors.studygateway import StudyGatewayAuth
-from titanium_downloader.extractors.vimeo import VimeoAuth
+from titanium_video_downloader import cli  # noqa: F401  (registers providers)
+from titanium_video_downloader.cli import _auth_mode
+from titanium_video_downloader.extractors.studygateway import StudyGatewayAuth
+from titanium_video_downloader.extractors.vimeo import VimeoAuth
 
 
 def _args(**kw):

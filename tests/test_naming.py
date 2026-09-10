@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from titanium_downloader.core.naming import sanitize, sanitize_path
+from titanium_video_downloader.core.naming import sanitize, sanitize_path
 
 
 def test_sanitize_collapses_whitespace():

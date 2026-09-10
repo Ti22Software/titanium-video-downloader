@@ -2,7 +2,7 @@
 
 import pytest
 
-from titanium_downloader.core.models import label_for, select_audio, select_video
+from titanium_video_downloader.core.models import label_for, select_audio, select_video
 
 VIDEOS = [
   {"id": "v1080", "width": 1920, "height": 1080, "bitrate": 5000},

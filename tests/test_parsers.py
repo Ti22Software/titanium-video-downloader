@@ -2,8 +2,8 @@
 
 import pytest
 
-from titanium_downloader.core.models import parse_playlist
-from titanium_downloader.extractors.studygateway import extract_ottdata, pick_playlist_url
+from titanium_video_downloader.core.models import parse_playlist
+from titanium_video_downloader.extractors.studygateway import extract_ottdata, pick_playlist_url
 
 
 def test_extract_ottdata_ok():

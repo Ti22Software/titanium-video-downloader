@@ -6,9 +6,9 @@ import types
 import pytest
 import requests
 
-from titanium_downloader.extractors import vimeo as vimeo_mod
-from titanium_downloader.extractors.base import AuthError
-from titanium_downloader.extractors.vimeo import _clip_ref, CONFIG_URL, VimeoAuth
+from titanium_video_downloader.extractors import vimeo as vimeo_mod
+from titanium_video_downloader.extractors.base import AuthError
+from titanium_video_downloader.extractors.vimeo import _clip_ref, CONFIG_URL, VimeoAuth
 
 
 def test_clip_ref_matrix():

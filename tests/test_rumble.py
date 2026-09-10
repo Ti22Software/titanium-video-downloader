@@ -6,9 +6,9 @@ import tarfile
 import pytest
 import requests
 
-from titanium_downloader.extractors import rumble as rumble_mod
-from titanium_downloader.extractors.base import AuthError
-from titanium_downloader.extractors.rumble import (
+from titanium_video_downloader.extractors import rumble as rumble_mod
+from titanium_video_downloader.extractors.base import AuthError
+from titanium_video_downloader.extractors.rumble import (
   _video_key,
   RumbleAuth,
   segment_headers,

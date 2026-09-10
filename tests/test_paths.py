@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from titanium_downloader.core import paths
-from titanium_downloader.core.paths import _bundled_ffmpeg, ffmpeg_path
+from titanium_video_downloader.core import paths
+from titanium_video_downloader.core.paths import _bundled_ffmpeg, ffmpeg_path
 
 
 def _exe(tmp_path, name="ff"):
@@ -62,7 +62,7 @@ def test_nothing_found_fails(monkeypatch):
 
 
 def test_remux_falls_back_to_system(tmp_path, monkeypatch):
-  from titanium_downloader.core import mux as mux_mod
+  from titanium_video_downloader.core import mux as mux_mod
   parts = tmp_path / "video"
   parts.mkdir()
   (parts / "00000.ts").write_bytes(b"fake")
@@ -86,7 +86,7 @@ def test_remux_falls_back_to_system(tmp_path, monkeypatch):
 
 
 def test_remux_all_fail_exits(tmp_path, monkeypatch):
-  from titanium_downloader.core import mux as mux_mod
+  from titanium_video_downloader.core import mux as mux_mod
   parts = tmp_path / "video"
   parts.mkdir()
   (parts / "00000.ts").write_bytes(b"fake")
@@ -105,7 +105,7 @@ def test_remux_all_fail_exits(tmp_path, monkeypatch):
 def test_remux_concat_list_is_absolute(tmp_path, monkeypatch):
   """Concat entries must be absolute: the demuxer resolves relatives
   against the list file's own dir, doubling relative workdir paths."""
-  from titanium_downloader.core import mux as mux_mod
+  from titanium_video_downloader.core import mux as mux_mod
   parts = tmp_path / "video"
   parts.mkdir()
   (parts / "00000.ts").write_bytes(b"fake")
@@ -124,7 +124,7 @@ def test_remux_concat_list_is_absolute(tmp_path, monkeypatch):
 
 
 def test_remux_retry_note_only_between_attempts(tmp_path, monkeypatch, capsys):
-  from titanium_downloader.core import mux as mux_mod
+  from titanium_video_downloader.core import mux as mux_mod
   parts = tmp_path / "video"
   parts.mkdir()
   (parts / "00000.ts").write_bytes(b"fake")
@@ -148,7 +148,7 @@ def test_remux_retry_note_only_between_attempts(tmp_path, monkeypatch, capsys):
 
 
 def test_remux_final_failure_prints_no_retry_note(tmp_path, monkeypatch, capsys):
-  from titanium_downloader.core import mux as mux_mod
+  from titanium_video_downloader.core import mux as mux_mod
   parts = tmp_path / "video"
   parts.mkdir()
   (parts / "00000.ts").write_bytes(b"fake")
@@ -170,7 +170,7 @@ def test_remux_final_failure_prints_no_retry_note(tmp_path, monkeypatch, capsys)
 def test_mux_detaches_stdin(tmp_path, monkeypatch):
   """ffmpeg must never hold the user's tty: a crash would otherwise leave
   echo disabled (invisible typing until `reset`)."""
-  from titanium_downloader.core import mux as mux_mod
+  from titanium_video_downloader.core import mux as mux_mod
   seen = {}
 
   class _Out:
@@ -202,7 +202,7 @@ def test_mux_detaches_stdin(tmp_path, monkeypatch):
 
 
 def test_remux_detaches_stdin(tmp_path, monkeypatch):
-  from titanium_downloader.core import mux as mux_mod
+  from titanium_video_downloader.core import mux as mux_mod
   parts = tmp_path / "video"
   parts.mkdir()
   (parts / "00000.ts").write_bytes(b"fake")

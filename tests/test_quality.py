@@ -2,7 +2,7 @@
 
 import pytest
 
-from titanium_downloader.core.models import pick_index, quality_items
+from titanium_video_downloader.core.models import pick_index, quality_items
 
 VIDEOS = [
   {"id": "v360", "width": 640, "height": 360, "bitrate": 800,
@@ -44,7 +44,7 @@ def test_pick_index_default_and_bounds():
 
 def test_pick_index_applies_one_based():
   """Regression: displayed [1] must select ordered[0], not ordered[1]."""
-  from titanium_downloader.core.models import order_by_height
+  from titanium_video_downloader.core.models import order_by_height
   videos = [
     {"id": "v360", "height": 360},
     {"id": "v1080", "height": 1080},

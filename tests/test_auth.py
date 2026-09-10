@@ -1,15 +1,15 @@
 """Offline tests: host rules, challenge tightness, auth markers, registry."""
 
-from titanium_downloader import cli  # noqa: F401  (registers providers)
-from titanium_downloader.extractors.base import (
+from titanium_video_downloader import cli  # noqa: F401  (registers providers)
+from titanium_video_downloader.extractors.base import (
   _auth_state,
   _hidden_input,
   _host,
   _looks_like_challenge,
   provider_for,
 )
-from titanium_downloader.extractors.studygateway import StudyGatewayAuth
-from titanium_downloader.extractors.vimeo import VimeoAuth
+from titanium_video_downloader.extractors.studygateway import StudyGatewayAuth
+from titanium_video_downloader.extractors.vimeo import VimeoAuth
 
 
 def test_host_avoids_query_false_positive():

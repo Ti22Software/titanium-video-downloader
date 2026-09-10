@@ -5,7 +5,7 @@ import tarfile
 
 import pytest
 
-from titanium_downloader.core.fetcher import fetch_hls_chunklist
+from titanium_video_downloader.core.fetcher import fetch_hls_chunklist
 
 M3U8 = ("#EXTM3U\n#EXT-X-VERSION:3\n"
         "#EXTINF:6.0,\nhttps://cdn/s0.ts\n"
@@ -68,7 +68,7 @@ def test_http_error_fails():
 
 
 def test_download_no_assemble_returns_parts_dir(tmp_path):
-  from titanium_downloader.core.fetcher import download_rendition
+  from titanium_video_downloader.core.fetcher import download_rendition
 
   class _RespSeg:
     status_code = 200
@@ -93,7 +93,7 @@ def test_download_no_assemble_returns_parts_dir(tmp_path):
 
 
 def test_download_assembles_by_default(tmp_path):
-  from titanium_downloader.core.fetcher import download_rendition
+  from titanium_video_downloader.core.fetcher import download_rendition
 
   class _RespSeg:
     status_code = 200
