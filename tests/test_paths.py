@@ -58,3 +58,44 @@ def test_nothing_found_fails(monkeypatch):
   with pytest.raises(SystemExit):
     ffmpeg_path()
   assert os.name in ("posix", "nt")  # documents supported platforms
+
+
+def test_remux_falls_back_to_system(tmp_path, monkeypatch):
+  from titanium_downloader.core import mux as mux_mod
+  parts = tmp_path / "video"
+  parts.mkdir()
+  (parts / "00000.ts").write_bytes(b"fake")
+  calls = []
+
+  class _Proc:
+    def __init__(self, rc):
+      self.returncode = rc
+      self.stderr = "boom" if rc else ""
+
+  def _run(cmd, **kw):
+    calls.append(cmd[0])
+    return _Proc(-11) if len(calls) == 1 else _Proc(0)
+
+  monkeypatch.setattr(mux_mod.subprocess, "run", _run)
+  monkeypatch.setattr(mux_mod.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+  monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
+  out = mux_mod.remux_concat(parts, tmp_path / "out.mp4")
+  assert out == tmp_path / "out.mp4"
+  assert calls == ["/bundled/ffmpeg", "/usr/bin/ffmpeg"]
+
+
+def test_remux_all_fail_exits(tmp_path, monkeypatch):
+  from titanium_downloader.core import mux as mux_mod
+  parts = tmp_path / "video"
+  parts.mkdir()
+  (parts / "00000.ts").write_bytes(b"fake")
+
+  class _Proc:
+    returncode = 1
+    stderr = "nope"
+
+  monkeypatch.setattr(mux_mod.subprocess, "run", lambda *a, **k: _Proc())
+  monkeypatch.setattr(mux_mod.shutil, "which", lambda _: None)
+  monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
+  with pytest.raises(SystemExit):
+    mux_mod.remux_concat(parts, tmp_path / "out.mp4")

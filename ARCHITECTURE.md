@@ -89,11 +89,12 @@ deferred), `ti22_dl.py` kept as a thin shim. 43 offline pytest tests green
 | StudyGateway | `extractors/studygateway.py` | `StudyGatewayAuth` (SAML + Playwright harvester + embed resolve), `extract_ottdata`, `pick_playlist_url`, `resolve_config_url` |
 | Vimeo public | `extractors/vimeo.py` | `VimeoAuth` (clip regex incl. unlisted/channels/groups; fast bare-config + watch-page Play-click intercept fallback; `video.privacy` gate); downstream shared verbatim |
 | Stubs | `extractors/rightnowmedia.py`, `generic.py` | Real `match()`, `NotImplementedError` elsewhere |
+| Rumble public | `extractors/rumble.py` | `RumbleAuth` (watch→key→embedJS, muxed-HLS renditions, browser bootstrap for gated origin fetches, live/DRM gates); sizes exact `meta` bytes; future: direct-ffmpeg HLS option for speed-over-progress users |
 | Session | `core/session.py` | UA/headers/timeouts, `new_session`, per-site `get_creds`, `load_cookies` |
 | Env file | `core/envfile.py` | stdlib `.env` loader (flat `KEY=VALUE`), `titanium-software/ti22-dl` defaults |
 | Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments`, `order_by_height`, `quality_items`, `pick_index` |
-| Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume) |
-| Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing) |
+| Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
+| Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static segfaults in mpegts demux on some files, upstream report TODO) |
 | Naming | `core/naming.py` | `sanitize`/`sanitize_path` |
 | CLI | `cli.py` | argparse front-end + orchestration; entry points `ti22-dl` script + `__main__.py` |
 
@@ -162,6 +163,7 @@ out-of-process (spawn + parse JSONL) stay open via this one mechanism.
 | studygateway (VHX OTT) | ✅ working | `True` / `studygateway` | Browser SAML login + tokenized embed (Phase 3 done, v0.1.0 package) |
 | Vimeo public | ✅ working E2E | `False` / `vimeo` | Fast bare-config for lax videos + headless watch-page Play-click intercept (player needs embedding context; bare player page idles) capturing minted `h=`/`s=`; `video.privacy` gate fails closed (private/password deferred); 576+577-seg 1080p+AAC download verified live |
 | RightNow Media | stub only | `True` / `rightnowmedia` | Login-required; UNVERIFIED similarity-to-StudyGateway hypothesis; needs login-flow + DRM probe before implementation |
+| Rumble public | ✅ working E2E | `False` / `rumble` | watch→key→embedJS (all endpoints 200 cookie-less in probes, but origin 403s bare `requests` from some egress — browser bootstrap for origin fetches, CDN stays in `requests`); muxed-HLS renditions (tar-or-plain chunklists), exact `meta.size` bytes, single shared AAC; live gate fails closed; 15-seg 1080p download verified live; ads never fetched (inherent) |
 | Unknown (login, ex-OBS) | slot only (`generic.py`) | `True` / `generic` | **Blocked on DRM probe first** — see Risks |
 | YouTube | deferred (no module) | — | Hand-rolled player-response + signature cipher if revived; cipher changes = ongoing maintenance, isolated in one tested module |
 

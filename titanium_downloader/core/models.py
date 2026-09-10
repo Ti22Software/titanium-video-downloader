@@ -103,14 +103,19 @@ def quality_items(videos, audios, qmap):
 
   size is the estimated TOTAL download (video rung + the selected audio
   rendition, via the same select_audio() the download path uses), so the
-  numbers match what lands on disk. Container (moov) overhead — KBs on GB
-  files — is excluded and documented as such.
+  numbers match what lands on disk. A rendition may carry an exact
+  size_total (e.g. backend-reported bytes), which wins over segment sums.
+  Container (moov) overhead — KBs on GB files — is excluded and documented
+  as such.
   """
   audio = select_audio(audios)
   audio_total = sum(s.get("size", 0) for s in audio["segments"])
   items = []
   for v in order_by_height(videos):
-    video_total = sum(s.get("size", 0) for s in v["segments"])
+    if v.get("size_total") is not None:
+      video_total = v["size_total"]
+    else:
+      video_total = sum(s.get("size", 0) for s in v["segments"])
     items.append({
       "id": v.get("id"),
       "quality": qmap.get(v["id"], label_for(v)),

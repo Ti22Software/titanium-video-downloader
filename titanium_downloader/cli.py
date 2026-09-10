@@ -23,7 +23,7 @@ from .core.models import (
   select_audio,
   select_video,
 )
-from .core.mux import mux
+from .core.mux import mux, remux_concat
 from .core.naming import sanitize, sanitize_path
 from .core.session import (
   EMBED_ORIGIN_HEADERS,
@@ -35,12 +35,14 @@ from .core.session import (
 from .extractors.base import AuthError, fail, provider_for, register_provider
 from .extractors.generic import GenericAuth
 from .extractors.rightnowmedia import RightNowMediaAuth
+from .extractors.rumble import RumbleAuth, segment_headers
 from .extractors.studygateway import pick_playlist_url, resolve_config_url, StudyGatewayAuth
 from .extractors.vimeo import VimeoAuth
 
 register_provider(StudyGatewayAuth())
 register_provider(VimeoAuth())
 register_provider(RightNowMediaAuth())
+register_provider(RumbleAuth())
 register_provider(GenericAuth())
 
 
@@ -179,27 +181,34 @@ def main(argv=None):
       print(input_url)
       return 0
 
-  config_url, title, _vid = resolve_config_url(session, input_url)
-  config = fetch_json(session, config_url, "player config")
-  playlist_url, fallback_url, qmap = pick_playlist_url(config)
+  config_url, title, _vid = None, None, None
+  if prov is not None and prov.site_key == "rumble":
+    videos, audios, qmap, title = prov.resolve_playlist(
+      session, args.input_url, debug=args.debug_login)
+    playlist_url = ""
+    config = {}
+  else:
+    config_url, title, _vid = resolve_config_url(session, input_url)
+    config = fetch_json(session, config_url, "player config")
+    playlist_url, fallback_url, qmap = pick_playlist_url(config)
 
-  playlist = None
-  for url in [u for u in (playlist_url, fallback_url) if u]:
-    try:
-      r = session.get(url, headers=EMBED_ORIGIN_HEADERS, timeout=TIMEOUT)
-      if r.status_code in (401, 403):
+    playlist = None
+    for url in [u for u in (playlist_url, fallback_url) if u]:
+      try:
+        r = session.get(url, headers=EMBED_ORIGIN_HEADERS, timeout=TIMEOUT)
+        if r.status_code in (401, 403):
+          continue
+        r.raise_for_status()
+        playlist = r.json()
+        playlist_url = url
+        break
+      except (requests.RequestException, ValueError):
         continue
-      r.raise_for_status()
-      playlist = r.json()
-      playlist_url = url
-      break
-    except (requests.RequestException, ValueError):
-      continue
-  if playlist is None:
-    fail("playlist.json fetch failed on all CDNs — URLs expired. "
-         "Re-paste a fresh URL (embed page first, config within 60s).")
+    if playlist is None:
+      fail("playlist.json fetch failed on all CDNs — URLs expired. "
+           "Re-paste a fresh URL (embed page first, config within 60s).")
 
-  videos, audios = parse_playlist(playlist)
+    videos, audios = parse_playlist(playlist)
 
   if args.list_qualities:
     print(f"{'quality':<8}{'size':>10}  {'bitrate':>9}  id")
@@ -226,8 +235,8 @@ def main(argv=None):
   else:
     video = select_video(videos, args.quality)
   audio = select_audio(audios)
-  v_urls = resolve_segments(playlist_url, video)
-  a_urls = resolve_segments(playlist_url, audio)
+  v_urls = resolve_segments(playlist_url or "", video)
+  a_urls = resolve_segments(playlist_url or "", audio)
 
   name = sanitize(title or config.get("video", {}).get("title") or "video")
   q = qmap.get(video["id"], label_for(video))
@@ -245,16 +254,25 @@ def main(argv=None):
   workdir = out_path.parent / (out_path.stem + ".ti22")
   workdir.mkdir(parents=True, exist_ok=True)
   fps = f" {video['framerate']:.2f}fps" if video.get("framerate") else ""
-  sr = audio.get("sample_rate")
-  sr_label = f" {sr / 1000:.1f}kHz" if sr else ""
-  print(f"video: {q} {video['width']}x{video['height']}{fps} "
-        f"({len(v_urls)} segs), "
-        f"audio: {audio_label(audio.get('codecs'))}{sr_label} ({len(a_urls)} segs)",
-        file=sys.stderr)
-  v_path = download_rendition("video", video, v_urls, workdir, session, args.concurrency)
-  a_path = download_rendition("audio", audio, a_urls, workdir, session, args.concurrency)
-  mux(v_path, a_path, out_path, total_duration=video.get("duration"),
-      ffmpeg=args.ffmpeg_path)
+  if video.get("muxed"):
+    # Muxed single-stream (e.g. HLS-TS): audio rides inside the segments.
+    print(f"video: {q} {video['width']}x{video['height']}{fps} "
+          f"({len(v_urls)} segs, muxed A/V)", file=sys.stderr)
+    download_rendition("video", video, v_urls, workdir, session,
+                       args.concurrency, suffix=".ts",
+                       headers=segment_headers(args.input_url))
+    remux_concat(workdir / "video", out_path, ffmpeg=args.ffmpeg_path)
+  else:
+    sr = audio.get("sample_rate")
+    sr_label = f" {sr / 1000:.1f}kHz" if sr else ""
+    print(f"video: {q} {video['width']}x{video['height']}{fps} "
+          f"({len(v_urls)} segs), "
+          f"audio: {audio_label(audio.get('codecs'))}{sr_label} ({len(a_urls)} segs)",
+          file=sys.stderr)
+    v_path = download_rendition("video", video, v_urls, workdir, session, args.concurrency)
+    a_path = download_rendition("audio", audio, a_urls, workdir, session, args.concurrency)
+    mux(v_path, a_path, out_path, total_duration=video.get("duration"),
+        ffmpeg=args.ffmpeg_path)
   if not args.keep_intermediate:
     shutil.rmtree(workdir, ignore_errors=True)
   print(str(out_path))

@@ -16,7 +16,7 @@ try:
 except ImportError:
   tqdm = None
 
-from .session import EMBED_DOC_HEADERS, EMBED_ORIGIN_HEADERS, RETRIES, TIMEOUT
+from .session import EMBED_DOC_HEADERS, EMBED_ORIGIN_HEADERS, RETRIES, TIMEOUT, UA
 from ..extractors.base import fail
 
 
@@ -51,11 +51,11 @@ def fetch_text(session, url):
   return r.text
 
 
-def _get_with_retry(session, url, idx):
+def _get_with_retry(session, url, idx, headers=None):
   last = None
   for attempt in range(RETRIES):
     try:
-      r = session.get(url, headers=EMBED_ORIGIN_HEADERS, timeout=TIMEOUT)
+      r = session.get(url, headers=headers or EMBED_ORIGIN_HEADERS, timeout=TIMEOUT)
       if r.status_code in (401, 403):
         raise requests.HTTPError(f"HTTP {r.status_code} (URL expired?)")
       r.raise_for_status()
@@ -66,7 +66,50 @@ def _get_with_retry(session, url, idx):
   raise RuntimeError(f"segment {idx} failed after {RETRIES} tries: {last}")
 
 
-def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency):
+def fetch_hls_chunklist(session, tar_url, referer):
+  """GET a tar-wrapped HLS chunklist.m3u8, return absolute segment URLs.
+
+  Rumble serves variant playlists as tar members selected by the
+  ``r_file``/``r_range`` query: download the slice, unpack with stdlib
+  tarfile, parse the ``#EXTINF`` URIs inside. stdlib only, no m3u8 dep.
+  """
+  import io
+  import tarfile
+  from urllib.parse import urljoin
+  headers = {
+    "User-Agent": UA,
+    "Referer": referer,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.5",
+  }
+  try:
+    r = session.get(tar_url, headers=headers, timeout=TIMEOUT)
+  except requests.RequestException as e:
+    fail(f"could not fetch HLS chunklist: {e}")
+  if r.status_code != 200:
+    fail(f"HLS chunklist returned HTTP {r.status_code}.")
+  data = r.content
+  if data.lstrip().startswith(b"#EXTM3U"):
+    # Served straight (r_file mechanism transmuxes server-side).
+    text = data.decode("utf-8", "replace")
+  else:
+    try:
+      tf = tarfile.open(fileobj=io.BytesIO(data))
+      names = [n for n in tf.getnames() if n.endswith(".m3u8")]
+      if not names:
+        fail("HLS chunklist tar has no .m3u8 member.")
+      text = tf.extractfile(names[0]).read().decode("utf-8", "replace")
+    except (tarfile.TarError, KeyError, ValueError):
+      fail("could not unpack HLS chunklist tar.")
+  uris = [ln.strip() for ln in text.splitlines()
+          if ln.strip() and not ln.strip().startswith("#")]
+  if not uris:
+    fail("HLS chunklist has no segments.")
+  return [urljoin(tar_url, u) for u in uris]
+
+
+def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
+                       suffix=".m4s", headers=None):
   parts = workdir / kind
   parts.mkdir(parents=True, exist_ok=True)
   manifest = workdir / f"{kind}.manifest.json"
@@ -77,7 +120,7 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency)
     except ValueError:
       done = set()
   todo = [i for i in range(len(seg_urls))
-          if i not in done or not (parts / f"{i:05d}.m4s").exists()]
+          if i not in done or not (parts / f"{i:05d}{suffix}").exists()]
   total = len(seg_urls)
   bar = None
   if tqdm and todo:
@@ -120,7 +163,8 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency)
 
   if todo:
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
-      futs = {ex.submit(_get_with_retry, session, seg_urls[i], i): i for i in todo}
+      futs = {ex.submit(_get_with_retry, session, seg_urls[i], i,
+                        headers): i for i in todo}
       try:
         for fut in concurrent.futures.as_completed(futs):
           try:
@@ -128,7 +172,7 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency)
           except RuntimeError as e:
             errors.append(str(e))
           else:
-            (parts / f"{idx:05d}.m4s").write_bytes(data)
+            (parts / f"{idx:05d}{suffix}").write_bytes(data)
             _mark(idx)
       finally:
         if bar:
@@ -146,8 +190,9 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency)
 
   out = workdir / f"{kind}.mp4"
   with open(out, "wb") as f:
-    f.write(base64.b64decode(rendition["init_segment"]))
+    if rendition.get("init_segment"):
+      f.write(base64.b64decode(rendition["init_segment"]))
     for i in range(len(seg_urls)):
-      with open(parts / f"{i:05d}.m4s", "rb") as sf:
+      with open(parts / f"{i:05d}{suffix}", "rb") as sf:
         shutil.copyfileobj(sf, f)
   return out

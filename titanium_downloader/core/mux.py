@@ -1,5 +1,6 @@
 """ffmpeg mux with progress parsing + binary resolution."""
 
+import shutil
 import subprocess
 import sys
 import time
@@ -66,3 +67,42 @@ def mux(video_path, audio_path, out_path, total_duration=None, ffmpeg=None):
   sys.stderr.write("\n")
   sys.stderr.flush()
   return out_path
+
+
+def remux_concat(parts_dir, out_path, ffmpeg=None):
+  """Remux muxed-TS parts (e.g. HLS) into MP4 via concat demuxer, -c copy.
+
+  Tries the resolved binary first, then falls back to system ffmpeg:
+  imageio 7.0.2-static segfaults in its mpegts demuxer on some files
+  (verified: Rumble TS), while system 6.1.1 handles them. Fail only if
+  every candidate fails.
+  """
+  ff = ffmpeg_path(ffmpeg)
+  parts_dir = Path(parts_dir)
+  segs = sorted(parts_dir.glob("*.ts"))
+  if not segs:
+    fail(f"no .ts segments in {parts_dir}.")
+  out_path = Path(out_path)
+  print(f"\nRemuxing {len(segs)} TS segments -> {out_path.resolve()}", file=sys.stderr)
+  lst = parts_dir / "concat.txt"
+  with open(lst, "w") as f:
+    for s in segs:
+      f.write(f"file '{s.as_posix()}'\n")
+  candidates = [ff]
+  sys_ff = shutil.which("ffmpeg")
+  if sys_ff and sys_ff != ff:
+    candidates.append(sys_ff)
+  last_err = ""
+  for cand in candidates:
+    cmd = [cand, "-y", "-v", "error", "-nostats",
+           "-f", "concat", "-safe", "0", "-i", str(lst),
+           "-c", "copy", "-movflags", "+faststart", str(out_path)]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode == 0:
+      return out_path
+    last_err = (proc.stderr or "")[-3000:]
+    if len(candidates) > 1:
+      print(f"note: ffmpeg {cand} failed (rc={proc.returncode}), "
+            "retrying with system ffmpeg", file=sys.stderr)
+  print(last_err, file=sys.stderr)
+  fail("ffmpeg remux failed.")
