@@ -29,3 +29,19 @@ def test_pick_index_default_and_bounds():
     pick_index(3, "4")
   with pytest.raises(SystemExit):
     pick_index(3, "x")
+
+
+def test_pick_index_applies_one_based():
+  """Regression: displayed [1] must select ordered[0], not ordered[1]."""
+  from titanium_downloader.core.models import order_by_height
+  videos = [
+    {"id": "v360", "height": 360},
+    {"id": "v1080", "height": 1080},
+    {"id": "v720", "height": 720},
+  ]
+  ordered = order_by_height(videos)
+  assert [v["id"] for v in ordered] == ["v1080", "v720", "v360"]
+  assert ordered[pick_index(3, "1") - 1]["id"] == "v1080"
+  assert ordered[pick_index(3, "2") - 1]["id"] == "v720"
+  assert ordered[pick_index(3, "3") - 1]["id"] == "v360"
+  assert ordered[pick_index(3, "") - 1]["id"] == "v1080"

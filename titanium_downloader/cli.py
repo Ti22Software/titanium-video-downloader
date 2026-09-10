@@ -211,7 +211,7 @@ def main(argv=None):
             file=sys.stderr)
     sys.stderr.write(f"pick quality [1-{len(ordered)}] (default 1): ")
     sys.stderr.flush()
-    video = ordered[pick_index(len(ordered), sys.stdin.readline())]
+    video = ordered[pick_index(len(ordered), sys.stdin.readline()) - 1]
   else:
     video = select_video(videos, args.quality)
   audio = select_audio(audios)
