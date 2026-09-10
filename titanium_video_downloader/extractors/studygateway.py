@@ -7,38 +7,30 @@ playlist → segments → mux (ffprobe/VLC clean, md5-deterministic).
 import json
 import re
 import sys
-from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 
 from ..core.fetcher import fetch_text
 from ..core.session import (
-  SAML_POST_URL,
   TIMEOUT,
   UA,
   WATCH_BROWSE_URL,
   WATCH_DOC_HEADERS,
   WATCH_LOGIN_URL,
-  WWW_BASE,
-  WWW_DOC_HEADERS,
-  WWW_LOGIN_URL,
 )
 from .base import (
   AuthError,
   AuthProvider,
   _auth_state,
   _debug_auth_state,
-  _debug_login_state,
   _debug_redact_url,
-  _hidden_input,
   _host,
-  _looks_like_challenge,
   fail,
 )
 
 
 class StudyGatewayAuth(AuthProvider):
-  """Happy-path SAML form login for studygateway (requests-only, no JS)."""
+  """StudyGateway (VHX OTT): browser SAML login + tokenized embed resolve."""
 
   site_key = "studygateway"
   requires_auth = True
@@ -47,125 +39,12 @@ class StudyGatewayAuth(AuthProvider):
     return _host(url) == "watch.studygateway.com"
 
   def login(self, session, email, password, debug=False):
-    if not email or not password:
-      raise AuthError("watch URL needs --email/--password or TI22_EMAIL/TI22_PASSWORD.")
-    # 1. GET watch/login WITHOUT following redirects to capture SAMLRequest.
-    # Verified: 302 Location: https://www.studygateway.com/login?SAMLRequest=...
-    saml_request = ""
-    relay_state = ""
-    token = ""
-    www_login_url = WWW_LOGIN_URL
-    try:
-      w0 = session.get(WATCH_LOGIN_URL, headers=WATCH_DOC_HEADERS,
-                       timeout=TIMEOUT, allow_redirects=False)
-      if debug:
-        loc = w0.headers.get("Location", "") if hasattr(w0, "headers") else ""
-        print(f"debug-login: GET watch/login (no-follow) status={w0.status_code} "
-              f"location={_debug_redact_url(loc)} has_saml={'SAMLRequest=' in loc}",
-              file=sys.stderr)
-      if w0.status_code in (301, 302, 303, 307, 308):
-        loc = w0.headers.get("Location", "")
-        if loc:
-          www_login_url = urljoin(WATCH_LOGIN_URL, loc)
-          try:
-            qs = parse_qs(urlparse(www_login_url).query)
-            if "SAMLRequest" in qs and qs["SAMLRequest"]:
-              saml_request = qs["SAMLRequest"][0]
-            if "RelayState" in qs and qs["RelayState"]:
-              relay_state = qs["RelayState"][0]
-          except Exception:
-            pass
-      else:
-        # Unexpected 200: try hidden inputs, then fall back to followed GET below.
-        try:
-          saml_request = _hidden_input(w0.text, "SAMLRequest") or ""
-          relay_state = _hidden_input(w0.text, "RelayState") or ""
-        except Exception:
-          pass
-      # Still seed cookies with a followed GET (harmless, keeps _session fresh).
-      try:
-        session.get(WATCH_LOGIN_URL, headers=WATCH_DOC_HEADERS, timeout=TIMEOUT)
-      except requests.RequestException:
-        pass
-    except requests.RequestException as e:
-      raise AuthError(f"could not reach watch login: {e}")
-    # 2. GET the full www login URL INCLUDING ?SAMLRequest=... (not bare /login).
-    try:
-      r = session.get(www_login_url, headers=WWW_DOC_HEADERS, timeout=TIMEOUT)
-    except requests.RequestException as e:
-      raise AuthError(f"could not reach www login: {e}")
-    if r.status_code != 200:
-      raise AuthError(f"www login returned HTTP {r.status_code}.")
-    html = r.text
-    www_login_url = r.url  # may now include ?SAMLRequest=...
-    if "SAMLRequest=" in www_login_url:
-      m = re.search(r"SAMLRequest=([^&]+)", www_login_url)
-      if m:
-        saml_request = m.group(1)
-    token = _hidden_input(html, "_token") or ""
-    saml_request = _hidden_input(html, "SAMLRequest") or saml_request
-    relay_state = _hidden_input(html, "RelayState") or relay_state
-    if debug:
-      print(f"debug-login: www login url={_debug_redact_url(www_login_url)} "
-            f"has_token={bool(token)} token_len={len(token)} "
-            f"has_samlrequest={bool(saml_request)} saml_len={len(saml_request)} "
-            f"has_relay={bool(relay_state)}",
-            file=sys.stderr)
-      _debug_login_state("www login html", html=html, url=www_login_url,
-                         status=r.status_code, session=session)
-    if not token or not saml_request:
-      if _looks_like_challenge(html):
-        raise AuthError("login blocked by bot check (challenge page) — "
-                        "retry with --cookies cookies.txt (Netscape export).")
-      raise AuthError("could not parse www login form (page format changed). "
-                      "Re-run with --debug-login and report has_token/has_samlrequest.")
-    # 3. POST creds to SAML endpoint (happy path: no JS recaptcha token).
-    form = {
-      "_token": token,
-      "login-type": "original",
-      "email": email,
-      "password": password,
-      "SAMLRequest": saml_request,
-      "RelayState": relay_state,
-      "g-recaptcha-response": "",
-    }
-    headers = dict(WWW_DOC_HEADERS)
-    headers["Origin"] = WWW_BASE
-    headers["Referer"] = www_login_url
-    headers["Content-Type"] = "application/x-www-form-urlencoded"
-    try:
-      r = session.post(SAML_POST_URL, data=form, headers=headers,
-                       timeout=TIMEOUT, allow_redirects=True)
-    except requests.RequestException as e:
-      raise AuthError(f"login POST failed: {e}")
-    if debug:
-      _debug_login_state("POST login/saml", html=getattr(r, "text", ""),
-                         url=getattr(r, "url", ""), status=r.status_code,
-                         session=session)
-    # 4. Verify AUTHORITATIVELY: /browse is PUBLIC (200 logged-out), so
-    # status/url prove nothing. Require _current_user/logout markers.
-    try:
-      b = session.get(WATCH_BROWSE_URL, headers=WATCH_DOC_HEADERS,
-                      timeout=TIMEOUT, allow_redirects=True)
-    except requests.RequestException as e:
-      raise AuthError(f"login verify failed: {e}")
-    if debug:
-      _debug_login_state("GET watch/browse", html=getattr(b, "text", ""),
-                         url=getattr(b, "url", ""), status=b.status_code,
-                         session=session)
-    st = _auth_state(getattr(b, "text", ""))
-    _debug_auth_state("browse auth", getattr(b, "text", ""), debug)
-    if not st.get("authed"):
-      if b.status_code != 200 or "/login" in (b.url or ""):
-        body = b.text.lower() if getattr(b, "text", None) else ""
-        if _looks_like_challenge(b.text if getattr(b, "text", None) else ""):
-          raise AuthError("login blocked by bot check (challenge on verify) — "
-                          "retry with --cookies cookies.txt (Netscape export).")
-      raise AuthError("login rejected (server kept logged-out browse page — "
-                      "bad email/password, expired SAMLRequest, or missing "
-                      "reCAPTCHA token) — retry with --cookies cookies.txt or "
-                      "--use-browser-login if creds are correct.")
-    return session
+    # Pure-requests SAML login was removed: the server demands a real
+    # reCAPTCHA v3 token no script can mint, so this path could only ever
+    # fail (and once printed false "login ok"). Use --use-browser-login
+    # (automatic for password logins, see cli) or --cookies.
+    raise AuthError("requests login is not supported for studygateway — "
+                    "use --use-browser-login or --cookies.")
 
   def browser_login(self, session, email, password, debug=False, headed=False):
     """Playwright harvester: real Chromium passes reCAPTCHA v3 natively,

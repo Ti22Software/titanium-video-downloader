@@ -161,6 +161,12 @@ def main(argv=None):
         if args.debug_login:
           print(f"debug-login: cred_source={cred_source} site={prov.site_key}",
                 file=sys.stderr)
+        if prov.site_key == "studygateway" and mode == "password":
+          # Requests SAML login was removed (reCAPTCHA walls it); password
+          # logins auto-upgrade to the browser harvest, same as the flag.
+          print("note: studygateway password login uses browser harvest",
+                file=sys.stderr)
+          mode = "browser"
         try:
           if mode == "browser":
             prov.browser_login(session, email, password,

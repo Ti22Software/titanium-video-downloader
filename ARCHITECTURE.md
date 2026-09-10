@@ -9,26 +9,25 @@ Release binary name: `ti22-video-dl` (`ti22-video-dl.exe` on Windows).
 `ti22_video_dl.py` downloads one studygateway video end-to-end: watch slug, embed,
 or config URL in, muxed 1080p MP4 out. Verified against a live ~800MB download
 (ffprobe specs, null-decode, VLC playback, md5-determinism across runs).
-Happy-path SAML plumbing verified live (302 → SAMLRequest → POST → browse),
-but pure-requests login does NOT authenticate: server demands reCAPTCHA v3
-(empty g-recaptcha-response rejected) and /browse is PUBLIC (200 logged-out),
-so the old status-based verify false-positived `login ok`. Verify is now
-authoritative via `_current_user`/logout markers; unauthenticated browse
-correctly raises `login rejected`. Primary login path is now
-`--use-browser-login` (Playwright Chromium harvests real session into the
-same pipeline); `--cookies` remains the manual fallback.
+Determinism is per-binary: same ffmpeg build → byte-identical; across builds
+the MP4 writer tag alone differs (e.g. `Lavf60.16.100` vs `Lavf61.1.100` =
+1 byte on a 746MB file), content-equivalent either way.
+StudyGateway login is browser-or-cookies only: pure-requests SAML login was
+removed (the server demands a reCAPTCHA v3 token no script can mint, and the
+path once printed false `login ok` — verified against the live public browse
+page, which carries all the old auth-marker substrings with null user ids).
+Password logins auto-upgrade to the browser harvest.
 
 ### Pipeline: the 4 hops
 
 ```
 watch.studygateway.com/.../videos/<slug>  (auto-login: --email/--password
-  or TI22_EMAIL/TI22_PASSWORD; --cookies Netscape fallback; --login-only test)
-  → GET watch/login (302 Location: www.../login?SAMLRequest=...)
-  → GET www/login?SAMLRequest=... (_token + hidden SAMLRequest/RelayState)
-  → POST www/login/saml (login-type=original; requires real reCAPTCHA v3
-    token — requests-only posts stay logged-out; use --use-browser-login)
-  → verify AUTHORITATIVELY via _current_user/logout markers (browse is
-    public 200 either way; cookie presence proves nothing)
+  or TI22_EMAIL/TI22_PASSWORD auto-upgrade to browser harvest;
+  --cookies Netscape fallback; --login-only test)
+  → browser SAML login (Chromium passes reCAPTCHA v3 natively, follows
+    saml/consume → browse?ticket=, exports _session)
+  → verify via _current_user/logout markers (browse is public 200 either
+    way; cookie presence proves nothing)
   → slug page (Referer: .../browse, never self) → tokenized iframe
     embed.vhx.tv/videos/<vhx_id>?auth-user-token=<hours-lived JWT>
     (generic iframe without token 401s; parse order: tokenized iframe →
@@ -54,10 +53,10 @@ single-use token; 60s expires while copy-pasting). The reliable inputs are the
 **watch slug URL** (browser login mints its own embed/config tokens in
 seconds) or the **embed URL** — both minted-and-consumed live.
 Login paths: `--use-browser-login` (Playwright Chromium, passes reCAPTCHA v3
-natively; needs `pip install playwright && playwright install chromium`),
+natively; needs `pip install playwright && playwright install chromium`;
+automatic when passwords are given without the flag),
 `--cookies` Netscape export (manual fallback, applies to this run's matched
-provider). Pure-requests password login is kept for plumbing/tests but
-rejected live by reCAPTCHA — no solver. `--no-auth` skips login entirely on
+provider). `--no-auth` skips login entirely on
 sites with `requires_auth=False` (public vimeo); auth-required sites fail
 fast naming the site. See Phase 3.
 
