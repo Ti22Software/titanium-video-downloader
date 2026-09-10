@@ -16,7 +16,6 @@ from .core.fetcher import download_rendition, fetch_json
 from .core.models import (
   audio_label,
   label_for,
-  order_by_height,
   parse_playlist,
   pick_index,
   quality_items,
@@ -204,28 +203,26 @@ def main(argv=None):
 
   if args.list_qualities:
     print(f"{'quality':<8}{'size':>10}  {'bitrate':>9}  id")
-    for v in order_by_height(videos):
-      total = sum(s.get("size", 0) for s in v["segments"])
-      q = qmap.get(v["id"], label_for(v))
-      print(f"{q:<8}{total / 1e6:>9.1f}M  {v['bitrate']:>9}  {v['id']}")
+    for item in quality_items(videos, audios, qmap):
+      print(f"{item['quality']:<8}{item['size'] / 1e6:>9.1f}M  "
+            f"{item['bitrate']:>9}  {item['id']}")
     return 0
 
   if args.list_qualities_json:
-    print(json.dumps(quality_items(videos, qmap), indent=2))
+    print(json.dumps(quality_items(videos, audios, qmap), indent=2))
     return 0
 
   if args.pick:
     if not sys.stdin.isatty():
       fail("--pick needs an interactive terminal.")
-    ordered = order_by_height(videos)
-    for i, v in enumerate(ordered, 1):
-      total = sum(s.get("size", 0) for s in v["segments"])
-      q = qmap.get(v["id"], label_for(v))
-      print(f"  [{i}] {q:<8}{total / 1e6:>9.1f}M  {v['bitrate']:>9}  {v['id']}",
-            file=sys.stderr)
-    sys.stderr.write(f"pick quality [1-{len(ordered)}] (default 1): ")
+    rows = quality_items(videos, audios, qmap)
+    for i, item in enumerate(rows, 1):
+      print(f"  [{i}] {item['quality']:<8}{item['size'] / 1e6:>9.1f}M  "
+            f"{item['bitrate']:>9}  {item['id']}", file=sys.stderr)
+    sys.stderr.write(f"pick quality [1-{len(rows)}] (default 1): ")
     sys.stderr.flush()
-    video = ordered[pick_index(len(ordered), sys.stdin.readline()) - 1]
+    picked = rows[pick_index(len(rows), sys.stdin.readline()) - 1]
+    video = next(v for v in videos if v["id"] == picked["id"])
   else:
     video = select_video(videos, args.quality)
   audio = select_audio(audios)

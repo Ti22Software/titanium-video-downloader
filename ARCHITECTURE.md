@@ -73,6 +73,9 @@ Quality selection: `--quality` (label/`best`/id-prefix, default `best`),
 `--list-qualities` (human table, stdout), `--list-qualities-json` (JSON
 array for front-ends, stdout), `--pick` (TTY-only numbered picker feeding
 the normal download path; mutually exclusive with the other three).
+`size` everywhere means estimated TOTAL download = selected video rung +
+`select_audio()` rendition (container `moov` overhead excluded); JSON also
+carries `video_size`/`audio_size` breakdown keys.
 
 ### Current module layout (`titanium_downloader/` package, v0.1.0)
 

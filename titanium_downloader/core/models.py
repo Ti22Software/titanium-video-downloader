@@ -98,18 +98,28 @@ def order_by_height(videos):
   return sorted(videos, key=lambda v: v.get("height") or 0, reverse=True)
 
 
-def quality_items(videos, qmap):
-  """Machine-readable rendition rows for --list-qualities-json."""
+def quality_items(videos, audios, qmap):
+  """Machine-readable rendition rows for --list-qualities-json.
+
+  size is the estimated TOTAL download (video rung + the selected audio
+  rendition, via the same select_audio() the download path uses), so the
+  numbers match what lands on disk. Container (moov) overhead — KBs on GB
+  files — is excluded and documented as such.
+  """
+  audio = select_audio(audios)
+  audio_total = sum(s.get("size", 0) for s in audio["segments"])
   items = []
   for v in order_by_height(videos):
-    total = sum(s.get("size", 0) for s in v["segments"])
+    video_total = sum(s.get("size", 0) for s in v["segments"])
     items.append({
       "id": v.get("id"),
       "quality": qmap.get(v["id"], label_for(v)),
       "width": v.get("width"),
       "height": v.get("height"),
       "bitrate": v.get("bitrate") or 0,
-      "size": total,
+      "size": video_total + audio_total,
+      "video_size": video_total,
+      "audio_size": audio_total,
       "codecs": v.get("codecs"),
     })
   return items
