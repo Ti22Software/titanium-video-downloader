@@ -138,23 +138,37 @@ def main(argv=None):
       print(f"note: --no-auth accepted for {prov.site_key}, skipping login", file=sys.stderr)
     elif mode == "cookies":
       print("note: using --cookies session, skipping password login", file=sys.stderr)
+    elif mode == "password" and not prov.requires_auth and not (args.email or args.password):
+      # No-auth-capable site, no creds given: skip the login call instead of
+      # printing a "login ok" no authentication earned. (Explicit creds fall
+      # through to login() so future real logins keep working.)
+      print(f"note: {prov.site_key} needs no login, skipping", file=sys.stderr)
     else:
       if mode == "browser" and args.cookies:
         print("note: --cookies ignored with --use-browser-login (browser session wins)",
               file=sys.stderr)
-      email, password, cred_source = get_creds(args, prov.site_key)
-      if args.debug_login:
-        print(f"debug-login: cred_source={cred_source} site={prov.site_key}",
-              file=sys.stderr)
-      try:
-        if mode == "browser":
-          prov.browser_login(session, email, password,
-                             debug=args.debug_login, headed=args.headed)
-        else:
-          prov.login(session, email, password, debug=args.debug_login)
-      except AuthError as e:
-        fail(f"{e}")
-      print("login ok", file=sys.stderr)
+      if mode == "browser" and prov.site_key == "vimeo":
+        # Vimeo login is a no-op; the browser is wanted for config harvest
+        # at resolve time instead. Flagged on the provider (documented hook).
+        # No "login ok" here either — nothing authenticated (yet).
+        print(f"note: {prov.site_key} needs no login; browser will harvest "
+              "the player config", file=sys.stderr)
+        prov.force_intercept = True
+        prov.intercept_headed = args.headed
+      else:
+        email, password, cred_source = get_creds(args, prov.site_key)
+        if args.debug_login:
+          print(f"debug-login: cred_source={cred_source} site={prov.site_key}",
+                file=sys.stderr)
+        try:
+          if mode == "browser":
+            prov.browser_login(session, email, password,
+                               debug=args.debug_login, headed=args.headed)
+          else:
+            prov.login(session, email, password, debug=args.debug_login)
+        except AuthError as e:
+          fail(f"{e}")
+        print("login ok", file=sys.stderr)
     try:
       input_url = prov.resolve_embed(session, args.input_url, debug=args.debug_login)
     except SystemExit:
