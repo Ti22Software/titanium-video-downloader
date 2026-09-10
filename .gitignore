@@ -3,6 +3,8 @@
 # Allowlist: commit these.
 !ti22_video_dl.py
 !ARCHITECTURE.md
+!README.md
+!LICENSE
 !.gitignore
 !.python-version
 !pyproject.toml

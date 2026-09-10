@@ -80,8 +80,9 @@ carries `video_size`/`audio_size` breakdown keys.
 ### Current module layout (`titanium_video_downloader/` package, v0.1.0)
 
 Phase 1 package move done: verbatim code motion, prints intact (event bus
-deferred), `ti22_video_dl.py` kept as a thin shim. 43 offline pytest tests green
-(naming, selection, parsers, auth markers, stubbed login, env/no-auth/quality).
+deferred), `ti22_video_dl.py` kept as a thin shim. 86 offline pytest tests green
+(naming, selection, parsers, auth markers, stubbed login, env/no-auth/quality,
+vimeo, rumble, fetcher, remux, ffmpeg resolve).
 
 | Area | Module | Contents |
 | ---- | ------ | -------- |
