@@ -259,7 +259,7 @@ def main(argv=None):
     print(f"video: {q} {video['width']}x{video['height']}{fps} "
           f"({len(v_urls)} segs, muxed A/V)", file=sys.stderr)
     download_rendition("video", video, v_urls, workdir, session,
-                       args.concurrency, suffix=".ts",
+                       args.concurrency, suffix=".ts", assemble=False,
                        headers=segment_headers(args.input_url))
     remux_concat(workdir / "video", out_path, ffmpeg=args.ffmpeg_path)
   else:

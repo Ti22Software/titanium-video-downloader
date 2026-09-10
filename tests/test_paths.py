@@ -99,3 +99,68 @@ def test_remux_all_fail_exits(tmp_path, monkeypatch):
   monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
   with pytest.raises(SystemExit):
     mux_mod.remux_concat(parts, tmp_path / "out.mp4")
+
+
+def test_remux_concat_list_is_absolute(tmp_path, monkeypatch):
+  """Concat entries must be absolute: the demuxer resolves relatives
+  against the list file's own dir, doubling relative workdir paths."""
+  from titanium_downloader.core import mux as mux_mod
+  parts = tmp_path / "video"
+  parts.mkdir()
+  (parts / "00000.ts").write_bytes(b"fake")
+
+  class _Proc:
+    returncode = 0
+    stderr = ""
+
+  monkeypatch.setattr(mux_mod.subprocess, "run", lambda *a, **k: _Proc())
+  monkeypatch.setattr(mux_mod.shutil, "which", lambda _: None)
+  monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
+  mux_mod.remux_concat(parts, tmp_path / "out.mp4")
+  lines = (parts / "concat.txt").read_text().splitlines()
+  assert lines == [f"file '{(parts / '00000.ts').resolve().as_posix()}'"]
+  assert lines[0][6] == "/"
+
+
+def test_remux_retry_note_only_between_attempts(tmp_path, monkeypatch, capsys):
+  from titanium_downloader.core import mux as mux_mod
+  parts = tmp_path / "video"
+  parts.mkdir()
+  (parts / "00000.ts").write_bytes(b"fake")
+
+  class _Proc:
+    def __init__(self, rc):
+      self.returncode = rc
+      self.stderr = "boom" if rc else ""
+
+  def _run(cmd, **kw):
+    _run.n += 1
+    return _Proc(1) if _run.n == 1 else _Proc(0)
+  _run.n = 0
+
+  monkeypatch.setattr(mux_mod.subprocess, "run", _run)
+  monkeypatch.setattr(mux_mod.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+  monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
+  mux_mod.remux_concat(parts, tmp_path / "out.mp4")
+  err = capsys.readouterr().err
+  assert err.count("retrying with system ffmpeg") == 1
+
+
+def test_remux_final_failure_prints_no_retry_note(tmp_path, monkeypatch, capsys):
+  from titanium_downloader.core import mux as mux_mod
+  parts = tmp_path / "video"
+  parts.mkdir()
+  (parts / "00000.ts").write_bytes(b"fake")
+
+  class _Proc:
+    returncode = 1
+    stderr = "tail-err"
+
+  monkeypatch.setattr(mux_mod.subprocess, "run", lambda *a, **k: _Proc())
+  monkeypatch.setattr(mux_mod.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+  monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
+  with pytest.raises(SystemExit):
+    mux_mod.remux_concat(parts, tmp_path / "out.mp4")
+  err = capsys.readouterr().err
+  assert err.count("retrying with system ffmpeg") == 1
+  assert "tail-err" in err

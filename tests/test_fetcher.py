@@ -65,3 +65,51 @@ def test_http_error_fails():
 
   with pytest.raises(SystemExit):
     fetch_hls_chunklist(_Bad(), TAR_URL, "https://rumble.com/vx")
+
+
+def test_download_no_assemble_returns_parts_dir(tmp_path):
+  from titanium_downloader.core.fetcher import download_rendition
+
+  class _RespSeg:
+    status_code = 200
+
+    def __init__(self, data):
+      self.content = data
+
+    def raise_for_status(self):
+      pass
+
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      return _RespSeg(b"segdata")
+
+  rendition = {"init_segment": "aGk=", "segments": [{}, {}]}
+  out = download_rendition("video", rendition, ["https://cdn/0.ts", "https://cdn/1.ts"],
+                           tmp_path, _Stub(), 2, suffix=".ts", assemble=False)
+  assert out == tmp_path / "video"
+  assert sorted(p.name for p in (tmp_path / "video").glob("*.ts")) == \
+    ["00000.ts", "00001.ts"]
+  assert not (tmp_path / "video.mp4").exists()
+
+
+def test_download_assembles_by_default(tmp_path):
+  from titanium_downloader.core.fetcher import download_rendition
+
+  class _RespSeg:
+    status_code = 200
+
+    def __init__(self, data):
+      self.content = data
+
+    def raise_for_status(self):
+      pass
+
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      return _RespSeg(b"segdata")
+
+  rendition = {"init_segment": None, "segments": [{}, {}]}
+  out = download_rendition("video", rendition, ["https://cdn/0.ts", "https://cdn/1.ts"],
+                           tmp_path, _Stub(), 2, suffix=".ts")
+  assert out == tmp_path / "video.mp4"
+  assert out.read_bytes() == b"segdatasegdata"

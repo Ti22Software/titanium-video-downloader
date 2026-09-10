@@ -87,13 +87,15 @@ def remux_concat(parts_dir, out_path, ffmpeg=None):
   lst = parts_dir / "concat.txt"
   with open(lst, "w") as f:
     for s in segs:
-      f.write(f"file '{s.as_posix()}'\n")
+      # Absolute entries: the concat demuxer resolves relative ones
+      # against the list file's own directory, doubling relative paths.
+      f.write(f"file '{s.resolve().as_posix()}'\n")
   candidates = [ff]
   sys_ff = shutil.which("ffmpeg")
   if sys_ff and sys_ff != ff:
     candidates.append(sys_ff)
   last_err = ""
-  for cand in candidates:
+  for i, cand in enumerate(candidates):
     cmd = [cand, "-y", "-v", "error", "-nostats",
            "-f", "concat", "-safe", "0", "-i", str(lst),
            "-c", "copy", "-movflags", "+faststart", str(out_path)]
@@ -101,7 +103,7 @@ def remux_concat(parts_dir, out_path, ffmpeg=None):
     if proc.returncode == 0:
       return out_path
     last_err = (proc.stderr or "")[-3000:]
-    if len(candidates) > 1:
+    if i < len(candidates) - 1:
       print(f"note: ffmpeg {cand} failed (rc={proc.returncode}), "
             "retrying with system ffmpeg", file=sys.stderr)
   print(last_err, file=sys.stderr)

@@ -109,7 +109,12 @@ def fetch_hls_chunklist(session, tar_url, referer):
 
 
 def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
-                       suffix=".m4s", headers=None):
+                       suffix=".m4s", headers=None, assemble=True):
+  """Download segments with resume manifest; assemble the combined file.
+
+  assemble=False skips writing kind.mp4 and returns the parts dir instead —
+  for muxed single-streams (HLS-TS) whose remux reads parts directly.
+  """
   parts = workdir / kind
   parts.mkdir(parents=True, exist_ok=True)
   manifest = workdir / f"{kind}.manifest.json"
@@ -189,6 +194,8 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
     sys.stderr.flush()
 
   out = workdir / f"{kind}.mp4"
+  if not assemble:
+    return parts
   with open(out, "wb") as f:
     if rendition.get("init_segment"):
       f.write(base64.b64decode(rendition["init_segment"]))
