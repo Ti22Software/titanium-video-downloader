@@ -227,3 +227,6 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
 
 - GUI toolkit (after Phase 1).
 - Bulk/series downloads (deferred; single-file only for now).
+- Identical-name output overwrite reported once (file present at launch,
+  no `--overwrite` flag exists yet) despite the `exists()` guard — could
+  not reproduce from code audit; needs a targeted repro before any fix.

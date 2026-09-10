@@ -246,10 +246,11 @@ def main(argv=None):
       print(f"note: sanitized output name to '{out_path.name}'", file=sys.stderr)
   else:
     out_path = Path(f"{name} [{q}].mp4")
-  if out_path.exists():
-    fail(f"output exists: {out_path} (remove it or pass a different output path).")
   if out_path.suffix.lower() != ".mp4":
     out_path = out_path.with_suffix(".mp4")
+    print(f"note: using output name '{out_path.name}'", file=sys.stderr)
+  if out_path.exists():
+    fail(f"output exists: {out_path} (remove it or pass a different output path).")
 
   workdir = out_path.parent / (out_path.stem + ".ti22")
   workdir.mkdir(parents=True, exist_ok=True)
