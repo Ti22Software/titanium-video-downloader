@@ -98,6 +98,17 @@ def order_by_height(videos):
   return sorted(videos, key=lambda v: v.get("height") or 0, reverse=True)
 
 
+def video_bytes(video):
+  """Exact size_total when the backend reports one, else segment sum."""
+  if video.get("size_total") is not None:
+    return video["size_total"]
+  return sum(s.get("size", 0) for s in video["segments"])
+
+
+def audio_bytes(audio):
+  return sum(s.get("size", 0) for s in audio["segments"])
+
+
 def quality_items(videos, audios, qmap):
   """Machine-readable rendition rows for --list-qualities-json.
 
@@ -109,13 +120,10 @@ def quality_items(videos, audios, qmap):
   as such.
   """
   audio = select_audio(audios)
-  audio_total = sum(s.get("size", 0) for s in audio["segments"])
+  audio_total = audio_bytes(audio)
   items = []
   for v in order_by_height(videos):
-    if v.get("size_total") is not None:
-      video_total = v["size_total"]
-    else:
-      video_total = sum(s.get("size", 0) for s in v["segments"])
+    video_total = video_bytes(v)
     items.append({
       "id": v.get("id"),
       "quality": qmap.get(v["id"], label_for(v)),

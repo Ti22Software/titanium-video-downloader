@@ -78,6 +78,22 @@ the normal download path; mutually exclusive with the other three).
 `select_audio()` rendition (container `moov` overhead excluded); JSON also
 carries `video_size`/`audio_size` breakdown keys.
 
+### Disk-space preflight and directories
+
+`core/disk.py`, checked after quality selection (first point estimates
+exist), skipped by `--no-space-check`, list modes return earlier:
+
+- Workdir FS needs `estimate + 256MiB` (segments); output FS needs
+  `estimate + 256MiB` (mux output). Same FS → ~2x + headroom total.
+- Known-short fails naming need-vs-have plus remedies (`--no-space-check`,
+  smaller `--quality`); unreadable (NAS/cloud drives) warns and proceeds.
+- `--output-dir DIR` roots auto-named outputs (`-o` still wins outright);
+  `--temp-dir DIR` roots `<stem>.ti22` workdirs (fast local disk, RAM
+  drive, or NAS staging — created with `mkdir -p`).
+- Batch (later): per-video re-check substituting measured finals for
+  estimates (self-correcting plan) + bounded-buffer download/mux pipeline
+  (default buffer 1) so the working set stays ~2-3 videos, not the corpus.
+
 ### Current module layout (`titanium_video_downloader/` package, v0.1.0)
 
 Phase 1 package move done: verbatim code motion, prints intact (event bus
@@ -95,7 +111,8 @@ vimeo, rumble, fetcher, remux, ffmpeg resolve).
 | Session | `core/session.py` | UA/headers/timeouts, `new_session`, per-site `get_creds`, `load_cookies` |
 | Env file | `core/envfile.py` | stdlib `.env` loader (flat `KEY=VALUE`), `titanium-software/ti22-video-dl` defaults |
 | Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments`, `order_by_height`, `quality_items`, `pick_index` |
-| Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
+| Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers/assemble), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
+| Disk | `core/disk.py` | `download_estimate` (single source with listings), split temp/output `check_space` gate + `human_bytes` |
 | Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static segfaults in mpegts demux on some files, upstream report TODO) |
 | Naming | `core/naming.py` | `sanitize`/`sanitize_path` |
 | CLI | `cli.py` | argparse front-end + orchestration; entry points `ti22-video-dl` script + `__main__.py` |

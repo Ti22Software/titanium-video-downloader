@@ -11,6 +11,7 @@ from pathlib import Path
 
 import requests
 
+from .core.disk import HEADROOM_BYTES, check_space, download_estimate
 from .core.envfile import load_dotenv
 from .core.fetcher import download_rendition, fetch_json
 from .core.models import (
@@ -110,6 +111,12 @@ def main(argv=None):
                   help="show browser window with --use-browser-login (debug 2FA/CAPTCHA)")
   ap.add_argument("--no-auth", action="store_true",
                   help="skip login entirely (only sites with requires_auth=False, e.g. public vimeo)")
+  ap.add_argument("--output-dir", default=None,
+                  help="directory for auto-named outputs (explicit -o wins; default: cwd)")
+  ap.add_argument("--temp-dir", default=None,
+                  help="directory for intermediate .ti22 workdirs (fast local disk or RAM drive; default: beside output)")
+  ap.add_argument("--no-space-check", action="store_true",
+                  help="skip the pre-download disk-space gate (unreadable NAS/cloud drives)")
   args = ap.parse_args(argv)
   if args.output and args.output_pos and args.output != args.output_pos:
     fail("pass the output path either positionally or via --output, not both.")
@@ -249,15 +256,28 @@ def main(argv=None):
     if Path(output_arg).name != out_path.name:
       print(f"note: sanitized output name to '{out_path.name}'", file=sys.stderr)
   else:
-    out_path = Path(f"{name} [{q}].mp4")
+    if args.output_dir:
+      Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+      out_path = Path(args.output_dir) / f"{name} [{q}].mp4"
+    else:
+      out_path = Path(f"{name} [{q}].mp4")
   if out_path.suffix.lower() != ".mp4":
     out_path = out_path.with_suffix(".mp4")
     print(f"note: using output name '{out_path.name}'", file=sys.stderr)
+  out_path.parent.mkdir(parents=True, exist_ok=True)
   if out_path.exists():
     fail(f"output exists: {out_path} (remove it or pass a different output path).")
 
-  workdir = out_path.parent / (out_path.stem + ".ti22")
+  if args.temp_dir:
+    work_root = Path(args.temp_dir)
+  else:
+    work_root = out_path.parent
+  workdir = work_root / (out_path.stem + ".ti22")
   workdir.mkdir(parents=True, exist_ok=True)
+  if not args.no_space_check:
+    est = download_estimate(video, audio)
+    check_space(workdir, est + HEADROOM_BYTES, "temporary files")
+    check_space(out_path.parent, est + HEADROOM_BYTES, "output")
   fps = f" {video['framerate']:.2f}fps" if video.get("framerate") else ""
   if video.get("muxed"):
     # Muxed single-stream (e.g. HLS-TS): audio rides inside the segments.
