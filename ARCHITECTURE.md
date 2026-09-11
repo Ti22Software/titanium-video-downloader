@@ -92,11 +92,17 @@ exist), skipped by `--no-space-check`, list modes return earlier:
   future GUI bubbling; partial state stays resume-compatible.
 - ffmpeg mux/remux failures are classified the same way (`_ffmpeg_error()`):
   explicit no-space text → disk-full message; write/trailer/closing EIO
-  markers → disk-I/O message naming `df`; anything else keeps the legacy
-  generic message plus the raw tail.
+  markers → disk-I/O message naming free space; anything else keeps the
+  legacy generic message plus the raw tail.
 - `--output-dir DIR` roots auto-named outputs (`-o` still wins outright);
   `--temp-dir DIR` roots `<stem>.ti22` workdirs (fast local disk, RAM
   drive, or NAS staging — created with `mkdir -p`).
+- No dedicated `--use-ram-for-temp-dir` flag (parked by the numbers, not
+  by taste): temp I/O is low single-digit percent of wall time on SSDs,
+  `/dev/shm` is 50%-of-RAM (absent on macOS/Windows), and volatility plus
+  Chromium shm contention outweigh seconds saved. Revisit only on measured
+  evidence (temp I/O >10% of wall time on real hardware); `--temp-dir`
+  already covers RAM-drive users explicitly.
 - All user paths pass through `user_path()` (`~`/`$VAR` expansion — no-op
   when the shell already expanded, lifesaver otherwise).
 - `-o` × `--output-dir` harmony: bare filename joins under the dir
