@@ -52,9 +52,9 @@ Pasted config URLs are inherently fragile (browser may have consumed the
 single-use token; 60s expires while copy-pasting). The reliable inputs are the
 **watch slug URL** (browser login mints its own embed/config tokens in
 seconds) or the **embed URL** — both minted-and-consumed live.
-Login paths: `--use-browser-login` (Playwright Chromium, passes reCAPTCHA v3
+Login paths: browser harvest via Playwright Chromium (passes reCAPTCHA v3
 natively; needs `pip install playwright && playwright install chromium`;
-automatic when passwords are given without the flag),
+automatic for auth-required sites — login is never a user decision),
 `--cookies` Netscape export (manual fallback, applies to this run's matched
 provider). `--no-auth` skips login entirely on
 sites with `requires_auth=False` (public vimeo); auth-required sites fail
@@ -136,8 +136,9 @@ vimeo, rumble, fetcher, remux, ffmpeg resolve).
 | Rumble public | `extractors/rumble.py` | `RumbleAuth` (watch→key→embedJS, muxed-HLS tar renditions + progressive-mp4 variant (all rungs, Range-resume direct, empty audio), browser bootstrap for gated origin fetches, live/DRM gates, shape-naming diagnostic on empty resolve); sizes nominal `meta` bytes (upper bound — VBR content lands lower); future: direct-ffmpeg HLS option for speed-over-progress users |
 | Session | `core/session.py` | UA/headers/timeouts, `new_session`, per-site `get_creds`, `load_cookies` |
 | Env file | `core/envfile.py` | stdlib `.env` loader (flat `KEY=VALUE`), `titanium-software/ti22-video-dl` defaults |
+| App config | `core/appconfig.py` | `config.toml` via stdlib tomllib (no new dep); CLI > env > file > builtins layering, lenient bad keys, `pick_always` tri-state with `--pick`/`--no-pick`, `--print-config` snapshot |
 | Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments`, `order_by_height`, `quality_items`, `pick_index` |
-| Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers/assemble), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
+| Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers/assemble), `download_direct` (single-file Range resume, fail-closed size check), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
 | Disk | `core/disk.py` | `download_estimate` (single source with listings), split temp/output `check_space` gate + `human_bytes` |
 | Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static segfaults in mpegts demux on some files, upstream report TODO) |
 | Naming | `core/naming.py` | `sanitize`/`sanitize_path` |

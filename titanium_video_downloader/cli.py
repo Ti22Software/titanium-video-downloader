@@ -12,6 +12,8 @@ from pathlib import Path
 
 import requests
 
+from .core.appconfig import (
+  BUILTINS, default_config_path, effective_config, resolve_config)
 from .core.batch import EntrySkip, dedupe_entries, is_url, parse_batch_file
 from .core.browser import close_browser
 from .core.disk import HEADROOM_BYTES, check_space, download_estimate
@@ -64,10 +66,13 @@ def _env_creds_present(site_key):
 def _auth_mode(args, prov):
   """Return 'none'|'cookies'|'browser'|'password', or fail() on conflicts.
 
-  Pure decision helper (no I/O) so the matrix is unit-testable.
+  Login is automatic, never a user decision: auth-required sites always
+  harvest via browser, no-auth sites skip (explicit creds still reach
+  login() so future real logins keep working). Pure decision helper
+  (no I/O) so the matrix is unit-testable.
   """
   if args.no_auth:
-    for opt in ("email", "password", "cookies", "use_browser_login"):
+    for opt in ("email", "password", "cookies"):
       if getattr(args, opt):
         fail(f"--no-auth conflicts with --{opt.replace('_', '-')}.")
     if prov.requires_auth:
@@ -75,11 +80,27 @@ def _auth_mode(args, prov):
       fail(f"{prov.site_key} requires auth — omit --no-auth or pass "
            f"--email/--password (TI22_VIDEO_DL_{site}_EMAIL).")
     return "none"
-  if args.cookies and not args.use_browser_login:
+  if args.cookies:
     return "cookies"
-  if args.use_browser_login:
+  if prov.requires_auth:
     return "browser"
   return "password"
+
+
+def _apply_noauth_override(args, explicit):
+  """Explicit CLI login signals beat a layered config no_auth=true.
+
+  Returns the effective no_auth. CLI --no-auth itself always wins (it is
+  explicit); explicit --email/--password/--cookies override a config-file
+  no_auth with a note. Pure (no I/O) for tests.
+  """
+  if "no_auth" in explicit:
+    return bool(args.no_auth)
+  if args.no_auth and any((args.email, args.password, args.cookies)):
+    print("note: explicit login options override config no_auth=true; "
+          "logging in", file=sys.stderr)
+    return False
+  return bool(args.no_auth)
 
 
 def main(argv=None):
@@ -96,43 +117,70 @@ def main(argv=None):
                   help="list available renditions and exit")
   ap.add_argument("--list-qualities-json", action="store_true",
                   help="list renditions as a JSON array (front-end integration) and exit")
-  ap.add_argument("--pick", action="store_true",
-                  help="interactively pick a quality from the list, then download")
+  pick_group = ap.add_mutually_exclusive_group()
+  pick_group.add_argument("--pick", action="store_true", default=None,
+                          help="interactively pick a quality from the list, then download")
+  pick_group.add_argument("--no-pick", action="store_true", default=None,
+                          help="never prompt for quality (overrides config pick_always)")
   ap.add_argument("--on-missing-quality",
-                  choices=("fallback", "fail", "ask"), default="fallback",
+                  choices=("fallback", "fail", "ask"), default=None,
                   help="when the requested quality doesn't exist: use nearest "
                        "below (fallback), fail, or ask with the full list "
-                       "(no effect with --pick)")
+                       "(no effect with --pick; config or default: fallback)")
   ap.add_argument("--ffmpeg-path", default=None,
                   help="explicit ffmpeg binary (default: imageio-ffmpeg extra, then PATH)")
-  ap.add_argument("--quality", default="best",
-                  help="height label (1080p/720p/540p/360p/240p), 'best', or rendition id prefix")
+  ap.add_argument("--quality", default=None,
+                  help="height label (1080p/720p/540p/360p/240p), 'best', or rendition id prefix (config or default: best = highest rung)")
   ap.add_argument("--output", "-o", default=None, help="output MP4 path")
-  ap.add_argument("--concurrency", "-j", type=int, default=4,
-                  help="parallel segment downloads (default 4)")
-  ap.add_argument("--keep-intermediate", action="store_true",
+  ap.add_argument("--concurrency", "-j", type=int, default=None,
+                  help="parallel segment downloads (config or default 4)")
+  ap.add_argument("--keep-intermediate", action="store_true", default=None,
                   help="keep video/audio intermediates and parts dir")
   ap.add_argument("--email", default=None, help="login email (or TI22_VIDEO_DL_<SITE>_EMAIL)")
   ap.add_argument("--password", default=None, help="login password (or TI22_VIDEO_DL_<SITE>_PASSWORD)")
   ap.add_argument("--cookies", default=None, help="Netscape cookies.txt fallback for bot-blocked login (export logged-in browser cookies for .studygateway.com)")
   ap.add_argument("--login-only", action="store_true",
                   help="login + resolve embed URL, print it, and exit")
-  ap.add_argument("--debug-login", action="store_true",
+  ap.add_argument("--debug-login", action="store_true", default=None,
                   help="print redacted login diagnostics (urls, parse flags, cookies, challenge hits)")
-  ap.add_argument("--use-browser-login", action="store_true",
-                  help="real Chromium login via Playwright (passes reCAPTCHA v3); exports cookies to pipeline")
-  ap.add_argument("--headed", action="store_true",
-                  help="show browser window with --use-browser-login (debug 2FA/CAPTCHA)")
-  ap.add_argument("--no-auth", action="store_true",
+  ap.add_argument("--headed", action="store_true", default=None,
+                  help="show the browser window wherever one runs (login harvest, vimeo intercept)")
+  ap.add_argument("--no-auth", action="store_true", default=None,
                   help="skip login entirely (only sites with requires_auth=False, e.g. public vimeo)")
   ap.add_argument("--output-dir", default=None,
                   help="directory for auto-named outputs and bare -o filenames "
                        "(dir-ful -o wins outright; default: cwd)")
   ap.add_argument("--temp-dir", default=None,
                   help="directory for intermediate .ti22 workdirs (fast local disk or RAM drive; default: beside output)")
-  ap.add_argument("--no-space-check", action="store_true",
+  ap.add_argument("--no-space-check", action="store_true", default=None,
                   help="skip the pre-download disk-space gate (unreadable NAS/cloud drives)")
+  ap.add_argument("--config", default=None,
+                  help="explicit config.toml path (default: app config dir)")
+  ap.add_argument("--print-config", action="store_true",
+                  help="print the effective layered config (values + sources) and exit")
   args = ap.parse_args(argv)
+  # An explicitly-passed but blank string flag is user error (often an empty
+  # shell variable) — fail like a bad flag (exit 2), never silently default.
+  for flag, value in (("--quality", args.quality),
+                      ("--ffmpeg-path", args.ffmpeg_path),
+                      ("--output", args.output),
+                      ("--output-dir", args.output_dir),
+                      ("--temp-dir", args.temp_dir),
+                      ("--batch-file", args.batch_file),
+                      ("--config", args.config),
+                      ("--email", args.email),
+                      ("--password", args.password),
+                      ("--cookies", args.cookies)):
+    if isinstance(value, str) and not value.strip():
+      fail(f"{flag} needs a non-empty value (got blank).", code=2)
+  config_path = user_path(args.config) if args.config else None
+  explicit = {k for k in BUILTINS if getattr(args, k, None) is not None}
+  args, config_sources = resolve_config(args, config_path=config_path)
+  args.no_auth = _apply_noauth_override(args, explicit)
+  if args.print_config:
+    found = config_path if config_path else default_config_path()
+    print(json.dumps(effective_config(args, config_sources, found), indent=2))
+    return 0
   atexit.register(close_browser)
   urls = [p for p in args.inputs if is_url(p)]
   outs = [p for p in args.inputs if not is_url(p)]
@@ -287,28 +335,23 @@ def _resolve_entry(session, args, url, quality, tag, batch, authed,
       # through to login() so future real logins keep working.)
       print(f"note: {prov.site_key} needs no login, skipping", file=sys.stderr)
     else:
-      if mode == "browser" and args.cookies:
-        print("note: --cookies ignored with --use-browser-login (browser session wins)",
-              file=sys.stderr)
-      if mode == "browser" and prov.site_key == "vimeo":
-        # Vimeo login is a no-op; the browser is wanted for config harvest
-        # at resolve time instead. Flagged on the provider (documented hook).
-        # No "login ok" here either — nothing authenticated (yet).
+      if prov.site_key == "vimeo" and args.headed:
+        # --headed summons a visible browser: force the upfront intercept
+        # harvest instead of fast-path-then-fallback.
         print(f"note: {prov.site_key} needs no login; browser will harvest "
-              "the player config", file=sys.stderr)
+              "the player config visibly", file=sys.stderr)
         prov.force_intercept = True
-        prov.intercept_headed = args.headed
+        prov.intercept_headed = True
       else:
         email, password, cred_source = get_creds(args, prov.site_key)
         if args.debug_login:
           print(f"debug-login: cred_source={cred_source} site={prov.site_key}",
                 file=sys.stderr)
-        if prov.site_key == "studygateway" and mode == "password":
-          # Requests SAML login was removed (reCAPTCHA walls it); password
-          # logins auto-upgrade to the browser harvest, same as the flag.
-          print("note: studygateway password login uses browser harvest",
+        if prov.site_key == "studygateway":
+          # Requests SAML login was removed (reCAPTCHA walls it); logins
+          # always harvest via browser.
+          print("note: studygateway login uses browser harvest",
                 file=sys.stderr)
-          mode = "browser"
         try:
           if mode == "browser":
             prov.browser_login(session, email, password,

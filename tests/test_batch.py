@@ -43,7 +43,7 @@ def test_dedupe_exact_and_quality_split():
 
 
 def _batch_args(**kw):
-  base = dict(no_auth=False, cookies=None, use_browser_login=False, headed=False,
+  base = dict(no_auth=False, cookies=None, headed=False,
               keep_intermediate=False, no_space_check=True, login_only=False,
               pick=False, quality="best", on_missing_quality="fallback",
               debug_login=False, output=None, output_dir=None, temp_dir=None)

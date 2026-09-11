@@ -186,22 +186,23 @@ class RumbleAuth(AuthProvider):
     """Return (video_key, embedjs_dict), fetching each side once.
 
     rumble.com gates bare requests (Cloudflare 403s the watch page and
-    embedJS alike), while hugh.cdn.rumble.cloud is open. So origin fetches
-    go through headless Chromium (which clears the challenge), and all
-    heavy CDN fetching stays in requests with resume support.
+    embedJS alike), while hugh.cdn.rumble.cloud is open. So gated origin
+    fetches go through one headless-Chromium page load (which clears the
+    challenge and serves both the HTML and the in-page embedJS fetch),
+    and all heavy CDN fetching stays in requests with resume support.
     """
     if watch_url in self._cache:
       return self._cache[watch_url]
     html = self._watch_html(session, watch_url)
-    if html is None:
-      html = self._browser_html(session, watch_url, debug)
-    key = _video_key(html)
+    key = _video_key(html) if html is not None else None
+    data = self._embedjs_json(session, watch_url, key) if key else None
+    if html is None or data is None:
+      key, html, data = self._browser_bundle(session, watch_url, key, debug)
     if not key:
       fail("could not find rumble video key on watch page "
            "(login-wall, removed video, or page format changed).")
-    data = self._embedjs_json(session, watch_url, key)
     if data is None:
-      data = self._browser_json(session, watch_url, key, debug)
+      fail("rumble embedJS unavailable (origin fetch failed).")
     if debug:
       import sys
       print(f"debug-login: rumble key={key}", file=sys.stderr)
@@ -230,8 +231,18 @@ class RumbleAuth(AuthProvider):
     except ValueError:
       return None
 
-  def _browser_pages(self, session, watch_url, debug=False):
-    """Shared-browser page primed on the watch URL (context per call)."""
+  def _browser_bundle(self, session, watch_url, key=None, debug=False):
+    """One page load serving both origin sides: (key, html, embedjs|None).
+
+    The page is primed on the watch URL (fresh context per call on the
+    shared browser); content() yields the HTML and an in-page fetch
+    inherits the page's referer/cookies/sec-fetch metadata for embedJS —
+    byte-identical shape to the browser's own XHR (a detached API request
+    misses fetch metadata and gets 403d). Cookies harvest into the
+    session. A missing key is derived from the loaded HTML first, so a
+    fully-gated video still resolves in a single load.
+    """
+    import json
     from ..core.browser import get_browser
     if debug:
       import sys
@@ -245,14 +256,10 @@ class RumbleAuth(AuthProvider):
     except ImportError:
       PwTimeout = TimeoutError
     try:
-      page.goto(watch_url, wait_until="domcontentloaded", timeout=45000)
-    except PwTimeout:
-      pass
-    return ctx, page
-
-  def _browser_html(self, session, watch_url, debug=False):
-    ctx, page = self._browser_pages(session, watch_url, debug)
-    try:
+      try:
+        page.goto(watch_url, wait_until="domcontentloaded", timeout=45000)
+      except PwTimeout:
+        pass
       html = page.content()
       for c in ctx.cookies():
         try:
@@ -261,37 +268,27 @@ class RumbleAuth(AuthProvider):
                               path=c.get("path", "/"))
         except Exception:
           pass
-      return html
-    finally:
-      try:
-        ctx.close()
-      except Exception:
-        pass
-
-  def _browser_json(self, session, watch_url, key, debug=False):
-    import json
-    ctx, page = self._browser_pages(session, watch_url, debug)
-    try:
-      # In-page fetch (not page.request): inherits the page's referer,
-      # cookies, and sec-fetch-mode:cors/site:same-origin — byte-identical
-      # shape to the browser's own embedJS XHR. A detached API request
-      # misses fetch metadata and gets 403d.
-      try:
-        got = page.evaluate(
-          """async (url) => {
-               const r = await fetch(url, {headers: {"Accept": "*/*"}});
-               return {status: r.status, text: await r.text()};
-             }""",
-          EMBEDJS_URL.format(key=key))
-      except Exception as e:
-        raise AuthError(f"rumble browser fetch failed: {e}")
-      if not isinstance(got, dict) or got.get("status") != 200:
-        raise AuthError("rumble embedJS rejected in browser too "
-                        f"(HTTP {got.get('status') if isinstance(got, dict) else '?'}).")
-      try:
-        return json.loads(got["text"])
-      except (ValueError, KeyError, TypeError):
-        raise AuthError("rumble embedJS did not return JSON.")
+      if key is None:
+        key = _video_key(html)
+      data = None
+      if key is not None:
+        try:
+          got = page.evaluate(
+            """async (url) => {
+                 const r = await fetch(url, {headers: {"Accept": "*/*"}});
+                 return {status: r.status, text: await r.text()};
+               }""",
+            EMBEDJS_URL.format(key=key))
+        except Exception as e:
+          raise AuthError(f"rumble browser fetch failed: {e}")
+        if not isinstance(got, dict) or got.get("status") != 200:
+          raise AuthError("rumble embedJS rejected in browser too "
+                          f"(HTTP {got.get('status') if isinstance(got, dict) else '?'}).")
+        try:
+          data = json.loads(got["text"])
+        except (ValueError, KeyError, TypeError):
+          raise AuthError("rumble embedJS did not return JSON.")
+      return key, html, data
     except AuthError:
       raise
     except Exception as e:
@@ -311,7 +308,7 @@ class RumbleAuth(AuthProvider):
     """
     html = self._watch_html(session, watch_url)
     if html is None:
-      html = self._browser_html(session, watch_url, debug)
+      _key, html, _data = self._browser_bundle(session, watch_url, None, debug)
     page_id = _page_id(watch_url)
     item = _shorts_item(html, watch_url, page_id)
     if item.get("live"):

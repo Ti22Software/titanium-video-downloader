@@ -13,8 +13,8 @@ Two resolve paths, in order:
 2. Browser intercept: headless Chromium loads the watch page, clicks Play,
    and captures the player's *own* ``/config`` request with its minted
    ``h=``/``s=`` params. Triggered automatically on fast-path 401/403/410,
-   or forced via ``force_intercept`` (wired to ``--use-browser-login`` by
-   cli). Verified live: Play click on the watch page fires config.
+   or forced via ``force_intercept`` (wired to ``--headed`` by cli for a
+   visible harvest). Verified live: Play click on the watch page fires config.
 
 Private / password / embed-restricted videos fail closed on the
 ``video.privacy`` gate (``anybody``/``unlisted`` pass).
@@ -84,8 +84,8 @@ class VimeoAuth(AuthProvider):
   site_key = "vimeo"
   requires_auth = False
 
-  # Set by cli when --use-browser-login targets vimeo: skip the fast path,
-  # headedness follows --headed. Documented hook, not ABC surface.
+  # Set by cli with --headed on vimeo: skip the fast path for a visible
+  # harvest; headedness follows --headed. Documented hook, not ABC surface.
   force_intercept = False
   intercept_headed = False
 
@@ -185,7 +185,7 @@ class VimeoAuth(AuthProvider):
       fail(f"could not parse vimeo clip id from URL: {_debug_redact_url(watch_url)}")
     if self.force_intercept:
       if debug:
-        print("debug-login: vimeo force_intercept (--use-browser-login), "
+        print("debug-login: vimeo force_intercept (--headed), "
               "skipping fast path", file=sys.stderr)
       return self.intercept_config_url(session, watch_url,
                                        debug=debug, headed=self.intercept_headed)

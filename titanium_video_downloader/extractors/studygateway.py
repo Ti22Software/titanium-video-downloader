@@ -41,10 +41,10 @@ class StudyGatewayAuth(AuthProvider):
   def login(self, session, email, password, debug=False):
     # Pure-requests SAML login was removed: the server demands a real
     # reCAPTCHA v3 token no script can mint, so this path could only ever
-    # fail (and once printed false "login ok"). Use --use-browser-login
-    # (automatic for password logins, see cli) or --cookies.
+    # fail (and once printed false "login ok"). Logins always harvest via
+    # browser (see cli) — or use --cookies.
     raise AuthError("requests login is not supported for studygateway — "
-                    "use --use-browser-login or --cookies.")
+                    "logins harvest via browser automatically, or use --cookies.")
 
   def browser_login(self, session, email, password, debug=False, headed=False):
     """Playwright harvester: real Chromium passes reCAPTCHA v3 natively,

@@ -77,8 +77,9 @@ titanium-video-downloader/
 │       ├── rumble.py          watch→key→embedJS, muxed-HLS + progressive-mp4 renditions, gated-origin bootstrap
 │       ├── rightnowmedia.py   stub — match real, rest waits for probe
 │       └── generic.py         fallback slot for the unknown site
-├── tests/                     86 offline tests (no network): parsers, auth, login stubs,
-│                              no-auth matrix, env/.env, quality, remux, ffmpeg resolve
+├── tests/                     148 offline tests (no network): parsers, auth, login stubs,
+│                              no-auth matrix, env/.env/config.toml, quality, remux, ffmpeg resolve,
+│                              batch ledger, rumble variants, direct download
 ├── ti22_video_dl.py           thin shim so `python ti22_video_dl.py ...` keeps working
 ├── pyproject.toml             titanium-video-downloader 0.1.0, ti22-video-dl script,
 │                              browser/ffmpeg/test extras
@@ -124,7 +125,7 @@ Downloads Chromium into the shared per-user cache (reused across projects). Only
 .venv/bin/python -m pytest tests/ -q
 ```
 
-This runs the 86 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
+This runs the 148 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
 
 ---
 
@@ -135,7 +136,7 @@ This runs the 86 offline tests — parsers, auth markers, stubbed logins, creden
 ```bash
 export TI22_VIDEO_DL_STUDYGATEWAY_EMAIL='you@example.com'
 read -s TI22_VIDEO_DL_STUDYGATEWAY_PASSWORD; export TI22_VIDEO_DL_STUDYGATEWAY_PASSWORD
-.venv/bin/ti22-video-dl "https://watch.studygateway.com/.../videos/<slug>" --use-browser-login -o "talk.mp4"
+.venv/bin/ti22-video-dl "https://watch.studygateway.com/.../videos/<slug>" -o "talk.mp4"
 ```
 
 **Public Vimeo or Rumble (no account, no flags):**
@@ -176,6 +177,8 @@ Each entry resolves with its own quality (line value, else `--quality`, else bes
 
 ## Credentials and auth
 
+Login is automatic, never a decision: auth-required sites (StudyGateway) always harvest via browser; public sites (Vimeo, Rumble) skip unless given explicit creds. `--no-auth` asserts skipping on no-auth sites (explicit creds/cookies alongside it are an error); on auth sites it fails fast by name. CLI `--no-auth` beats a config `no_auth = true`, and explicit CLI login options beat that too.
+
 Precedence for every site: `--email` / `--password` flags → `TI22_VIDEO_DL_<SITE>_*` env vars → interactive password prompt (email known + terminal). No generic fallback by design. Values are never logged; `--debug-login` prints only redacted metadata (`cred_source=flag|site-env|prompt|missing`, cookie *names*).
 
 | Variable pattern | Example | For |
@@ -185,10 +188,31 @@ Precedence for every site: `--email` / `--password` flags → `TI22_VIDEO_DL_<SI
 
 Optional `.env` file (flat `KEY=VALUE`, real environment always wins): `./.env` first, then `~/.config/titanium-software/ti22-video-dl/.env` (`%APPDATA%\titanium-software\ti22-video-dl\.env` on Windows).
 
+## Config file
+
+`config.toml` (same config dir as `.env`) holds your manner-defaults so the flags stop growing. Precedence: CLI flag → environment → `config.toml` → built-in. Credentials never live here (env-only, by design).
+
+```toml
+quality = "720p"              # default: "best" = literal highest rung
+on_missing_quality = "fallback"  # fallback | fail | ask
+concurrency = 4
+ffmpeg_path = "/usr/bin/ffmpeg"
+output_dir = "~/videos/batch" # ~-expanded
+temp_dir = "~/videos/tmp"
+keep_intermediate = false
+no_space_check = false
+debug_login = false
+headed = false
+no_auth = false
+pick_always = false           # config-only: prompt the picker every resolve
+```
+
+Unknown keys, wrong types, and malformed TOML never fail a run — a `note:` names the key and it's ignored. `--pick` forces picking (even over `pick_always = false`); `--no-pick` forces it off (even over `true`); `pick_always` on a non-terminal notes and falls back to default quality. `--config PATH` points at another file; `--print-config` dumps effective values + sources as JSON and exits.
+
 | Situation | What to do |
 | --- | --- |
 | Bot check blocks password login | `--cookies cookies.txt` (Netscape export of a logged-in browser) |
-| 2FA / CAPTCHA / headed debugging | `--use-browser-login --headed` |
+| 2FA / CAPTCHA / headed debugging | `--headed` (visible browser wherever one runs) |
 | Just verifying auth + resolve | `--login-only` (prints the resolved URL, exits) |
 | Site needs no login | Nothing — or `--no-auth` to assert it (auth-required sites fail fast naming themselves) |
 | Diagnosing login flow | `--debug-login` (redacted URLs, parse flags, auth markers) |
@@ -200,7 +224,7 @@ Optional `.env` file (flat `KEY=VALUE`, real environment always wins): `./.env` 
 - Python `==3.12.*`, stdlib + [`requests`](https://requests.readthedocs.io/) (+ optional [`tqdm`](https://tqdm.tqdm.pro/))
 - [`playwright`](https://playwright.dev/python/) 1.62 (`browser` extra) — URL harvesting only, never downloading
 - [`imageio-ffmpeg`](https://github.com/imageio/imageio-ffmpeg) 0.6.0 → ffmpeg 7.0.2-static (`ffmpeg` extra), system ffmpeg fallback
-- [`pytest`](https://pytest.org/) 9 (`test` extra) — 86 offline tests
+- [`pytest`](https://pytest.org/) 9 (`test` extra) — 148 offline tests
 - `uv` for environments, `git` for everything else
 
 ---
@@ -219,9 +243,8 @@ Only download content you have the rights to. This tool is built for your own vi
 ## Roadmap
 
 - Event bus (`events.py`) — the GUI prerequisite; `--list-qualities-json`'s stdout discipline is the down payment
-- User config file (default quality, `--on-missing-quality` mode, dirs, concurrency) — CLI flags stay authoritative
 - RightNow Media probe (login flow + DRM check), then implementation
-- Batch/series downloads (persistent browser across videos, per-file determinism)
+- Batch pipeline parallelism (download N+1 while muxing N) — batch ships sequential
 - PyInstaller per-OS bundles (`ti22-video-dl` + Chromium + ffmpeg, built natively per platform)
 - YouTube — deferred, deliberately
 

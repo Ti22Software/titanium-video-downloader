@@ -137,6 +137,14 @@ def test_resolve_playlist_gates():
 
   with pytest.raises(SystemExit):
     RumbleAuth().resolve_playlist(_LiveSession(), WATCH_URL)
+
+
+def test_resolve_embed_no_key_anywhere_fails(monkeypatch):
+  # Keyless requests HTML (login wall) falls through to the browser; only
+  # a keyless browser page fails.
+  monkeypatch.setattr(RumbleAuth, "_browser_bundle",
+                      lambda self, session, url, key=None, debug=False:
+                      (None, "<html>no key here</html>", None))
   with pytest.raises(SystemExit):
     RumbleAuth().resolve_embed(_StubNoKey(), WATCH_URL)
 
@@ -157,17 +165,62 @@ def test_bootstrap_falls_back_to_browser_on_403(monkeypatch):
         calls["watch"] += 1
       return _Resp(403, text="challenge")
 
-  monkeypatch.setattr(RumbleAuth, "_browser_html",
-                      lambda self, session, url, debug=False: WATCH_HTML)
-  monkeypatch.setattr(RumbleAuth, "_browser_json",
-                      lambda self, session, url, key, debug=False: dict(EMBEDJS))
+  monkeypatch.setattr(RumbleAuth, "_browser_bundle",
+                      lambda self, session, url, key=None, debug=False:
+                      (key or "v778qwk", WATCH_HTML, dict(EMBEDJS)))
   auth = RumbleAuth()
   key, data = auth._bootstrap(_Gated(), WATCH_URL)
   assert key == "v778qwk"
   assert data["title"] == "COINBASE JUST FIRED"
   # second call served from cache: no further fetches
   auth._bootstrap(_Gated(), WATCH_URL)
-  assert calls == {"watch": 1, "embedjs": 1}
+  # watch gated → key unknown → requests embedJS untried (single page load
+  # covers both sides in-page instead of a second round-trip)
+  assert calls == {"watch": 1, "embedjs": 0}
+
+
+def test_browser_bundle_single_load_serves_both(monkeypatch):
+  loads = {"goto": 0, "content": 0, "evaluate": 0}
+
+  class _Page:
+    def goto(self, url, wait_until=None, timeout=None):
+      loads["goto"] += 1
+
+    def content(self):
+      loads["content"] += 1
+      return WATCH_HTML
+
+    def evaluate(self, js, url):
+      loads["evaluate"] += 1
+      import json as _json
+      return {"status": 200, "text": _json.dumps(dict(EMBEDJS))}
+
+  class _Ctx:
+    def new_page(self):
+      return _Page()
+
+    def cookies(self):
+      return []
+
+    def close(self):
+      pass
+
+  class _Browser:
+    def new_context(self, user_agent=None):
+      return _Ctx()
+
+  import titanium_video_downloader.core.browser as browser_mod
+  monkeypatch.setattr(browser_mod, "get_browser", lambda headed=False: _Browser())
+
+  class _Bare:
+    cookies = None
+
+  auth = RumbleAuth()
+  key, html, data = auth._browser_bundle(_Bare(), WATCH_URL, None, debug=False)
+  assert key == "v778qwk"
+  assert "embed/v778qwk" in html
+  assert data["title"] == "COINBASE JUST FIRED"
+  assert loads == {"goto": 1, "content": 1, "evaluate": 1}
 
 
 def test_bootstrap_prefers_requests_when_open():
