@@ -227,6 +227,22 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
   imageio-ffmpeg extra > system PATH. `-c copy` remuxes verified
   content-equivalent across system 6.1.1 and bundled 7.0.2 (stream specs
   identical, 1-byte container delta, null-decode clean).
+- **ffmpeg alternatives, evaluated and parked (BillyBoy's choice c).**
+  Neither Bento4 nor GPAC/MP4Box replaces ffmpeg today. Bento4 is out on
+  three independent grounds: GPL-or-commercial licensing (worse than our
+  current LGPL posture), dormant upstream (site © 2020, empty releases,
+  568 open issues), and tool-shape mismatch (`mp4mux` wants elementary
+  streams, not our fMP4 fragments / TS segments). GPAC is the named Plan B
+  (LGPL-2.1 like today, active upstream, `m2tsdmx` is a *different* TS
+  parser that may not share the segfault) — but unproven until spiked.
+  Trigger for the spike: Windows binary equally broken at packaging
+  acceptance, or upstream silence plus a second TS-class failure. Spike
+  shape: CI-build minimal static MP4Box (`./configure --static-bin`,
+  build tools + zlib only), run the crashing segments + a DASH set through
+  it, byte-compare against ffmpeg outputs, assess progress-output rework
+  (no `-progress pipe:1` equivalent — quiet remux has precedent). Bento4
+  inspection tools (`mp4dump`/`mp4info`) remain fine as dev-only forensics;
+  using the tools is not bundling them.
 - **Signing: deferred.** Expect SmartScreen/Gatekeeper warnings until
   Windows cert + Apple Developer ID are wired into CI as secrets.
 - **Installer offers the config dir.** The loader only reads — nothing
