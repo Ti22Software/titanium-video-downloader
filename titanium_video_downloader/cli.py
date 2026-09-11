@@ -17,7 +17,7 @@ from .core.browser import close_browser
 from .core.disk import HEADROOM_BYTES, check_space, download_estimate
 from .core.paths import user_path
 from .core.envfile import load_dotenv
-from .core.fetcher import download_rendition, fetch_json
+from .core.fetcher import download_direct, download_rendition, fetch_json
 from .core.models import (
   audio_label,
   find_video,
@@ -481,7 +481,20 @@ def _download_entry(session, args, bundle, tag, batch):
     check_space(out_path.parent, est + HEADROOM_BYTES, "output")
   fps = f" {video['framerate']:.2f}fps" if video.get("framerate") else ""
   q = bundle["q"]
-  if video.get("muxed"):
+  if video.get("progressive"):
+    # Direct progressive file (e.g. Rumble mp4-only): single Range-resume
+    # GET straight to the output — no segments, no ffmpeg, audio inside.
+    size = video.get("size_total") or 0
+    print(f"{pre}video: {q} {video['width']}x{video['height']}{fps} "
+          f"(progressive mp4, {size / 1e6:.1f}M, audio included)",
+          file=sys.stderr)
+    url = v_urls[0] if v_urls else None
+    if not url:
+      fail("progressive rendition has no file URL.")
+    download_direct("video", url, out_path, session,
+                    headers=segment_headers(bundle["url"]),
+                    expected_size=size or None)
+  elif video.get("muxed"):
     # Muxed single-stream (e.g. HLS-TS): audio rides inside the segments.
     print(f"{pre}video: {q} {video['width']}x{video['height']}{fps} "
           f"({len(v_urls)} segs, muxed A/V)", file=sys.stderr)

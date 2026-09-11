@@ -10,7 +10,7 @@ Streaming sites don't hand you a video file; they hand your browser a *recipe* f
 | --- | --- | --- | --- |
 | StudyGateway (VHX OTT) | Full login (SAML + reCAPTCHA-proof browser harvest) | Watch slug → embed iframe token → 60s player config → DASH playlist | ✅ working |
 | Vimeo public (+unlisted) | None needed | Watch page → player config (fast path) or headless Play-click intercept (strict videos) → DASH playlist | ✅ working |
-| Rumble public | None needed | Watch page → video key → embedJS metadata → HLS-TS segments → concat remux | ✅ working |
+| Rumble public | None needed | Watch page → video key → embedJS metadata → HLS-TS segments → concat remux (tar variant) or direct progressive MP4 (mp4 variant, all rungs) | ✅ working |
 | RightNow Media | Login (planned) | Stub only — needs a login-flow + DRM probe first | 🔲 slot |
 | Unknown login site | Login (planned) | Generic fallback slot — blocked on DRM probe first | 🔲 slot |
 | YouTube | — | Deferred, no module | 🔲 deferred |
@@ -74,7 +74,7 @@ titanium-video-downloader/
 │       ├── base.py            AuthError, AuthProvider ABC, registry, redacted debug
 │       ├── studygateway.py    SAML + browser harvest + embed/config resolve
 │       ├── vimeo.py           clip regex, fast config, Play-click intercept, privacy gate
-│       ├── rumble.py          watch→key→embedJS, muxed-HLS renditions, gated-origin bootstrap
+│       ├── rumble.py          watch→key→embedJS, muxed-HLS + progressive-mp4 renditions, gated-origin bootstrap
 │       ├── rightnowmedia.py   stub — match real, rest waits for probe
 │       └── generic.py         fallback slot for the unknown site
 ├── tests/                     86 offline tests (no network): parsers, auth, login stubs,

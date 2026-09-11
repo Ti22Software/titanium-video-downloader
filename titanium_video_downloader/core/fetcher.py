@@ -110,6 +110,80 @@ def fetch_hls_chunklist(session, tar_url, referer):
   return [urljoin(tar_url, u) for u in uris]
 
 
+def download_direct(kind, url, dest, session, headers=None, expected_size=None):
+  """Single-file download with Range resume (direct progressive media).
+
+  Streams to dest (resuming a partial file via Range), with a byte progress
+  bar. fail()s closed on HTTP errors, unsatisfiable ranges, or a final size
+  that disagrees with the backend-reported expected_size.
+  """
+  dest = Path(dest)
+  try:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+  except OSError as e:
+    io_fail(f"{kind} output dir", e)
+  try:
+    have = dest.stat().st_size if dest.exists() else 0
+  except OSError:
+    have = 0
+  req_headers = dict(headers or {})
+  if have:
+    req_headers["Range"] = f"bytes={have}-"
+    print(f"{kind}: resuming at {have / 1e6:.1f}M", file=sys.stderr)
+  try:
+    r = session.get(url, headers=req_headers, timeout=TIMEOUT, stream=True)
+  except requests.RequestException as e:
+    fail(f"could not fetch {kind} file: {e}")
+  if r.status_code == 416:
+    if expected_size and have >= expected_size:
+      return dest  # already complete; server has nothing more to send
+    fail(f"{kind} resume offset rejected (HTTP 416, have {have} bytes).")
+  if r.status_code == 200 and have:
+    print(f"{kind}: server ignored Range, restarting", file=sys.stderr)
+    have = 0
+  if r.status_code not in (200, 206):
+    fail(f"{kind} file returned HTTP {r.status_code}.")
+  total = None
+  content_range = r.headers.get("Content-Range", "") if hasattr(r, "headers") else ""
+  if "/" in content_range:
+    try:
+      total = int(content_range.rsplit("/", 1)[1])
+    except ValueError:
+      total = None
+  if total is None:
+    try:
+      total = have + int(r.headers.get("Content-Length", 0))
+    except (ValueError, TypeError, AttributeError):
+      total = None
+  mode = "ab" if (r.status_code == 206 and have) else "wb"
+  if mode == "wb":
+    have = 0
+  bar = None
+  if tqdm:
+    bar = tqdm(total=total, initial=have, unit="B", unit_scale=True, desc=kind)
+  start = time.monotonic()
+  try:
+    with open(dest, mode) as f:
+      for chunk in r.iter_content(chunk_size=1024 * 1024):
+        if not chunk:
+          continue
+        try:
+          f.write(chunk)
+        except OSError as e:
+          io_fail(f"{kind} file write", e)
+        have += len(chunk)
+        if bar:
+          bar.update(len(chunk))
+  finally:
+    if bar:
+      bar.close()
+  el = time.monotonic() - start
+  if expected_size and have != expected_size:
+    fail(f"{kind} file incomplete: got {have} bytes, expected {expected_size}.")
+  print(f"{kind}: {have / 1e6:.1f}M in {el:.1f}s", file=sys.stderr)
+  return dest
+
+
 # Manifest checkpoint cadence: flush sorted(done) this often, so a crash
 # or ENOSPC mid-batch still leaves recent progress for resume.
 MANIFEST_EVERY = 10

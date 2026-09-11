@@ -3,10 +3,13 @@
 Public flow, verified live cookie-less end to end::
 
   watch page (/v<key>-<slug>.html) → video key via oembed <link> tag
-  → GET /embedJS/u3/?request=video&ver=2&v=<key>…
-  → ua.tar.{360,480,720,1080} chunklist URLs + meta{bitrate,size,w,h}
-  → ua.audio.192 direct .aac + meta
-  → tar-wrapped chunklist.m3u8 → .ts segments → concat + ffmpeg remux
+   → GET /embedJS/u3/?request=video&ver=2&v=<key>…
+   → either ua.tar.{360..1080} chunklist URLs + meta (muxed-HLS tail:
+   tar-wrapped chunklist.m3u8 → .ts segments → concat + ffmpeg remux),
+   or ua.mp4.{360..2160} direct progressive .mp4 URLs + meta (all rungs
+   exposed, single Range-resume GET, no ffmpeg — audio rides inside).
+   → shared ua.audio.192 direct .aac + meta (HLS-tar path only;
+   progressive mp4s already carry audio, so that rendition is empty).
 
 Differences from the DASH path: renditions are muxed A/V (``muxed: True``,
 ``init_segment: None``), sizes are exact ``meta.size`` bytes (not
@@ -141,28 +144,27 @@ class RumbleAuth(AuthProvider):
       return None
 
   def _browser_pages(self, session, watch_url, debug=False):
-    """Headless Chromium session primed on the watch page (yields page)."""
-    try:
-      from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
-    except ImportError:
-      raise AuthError("playwright not installed — run: pip install playwright "
-                      "&& playwright install chromium, or use --cookies.")
+    """Shared-browser page primed on the watch URL (context per call)."""
+    from ..core.browser import get_browser
     if debug:
       import sys
       print("debug-login: rumble origin gated, using browser bootstrap",
             file=sys.stderr)
-    pw = sync_playwright().start()
-    browser = pw.chromium.launch()
+    browser = get_browser()
     ctx = browser.new_context(user_agent=UA)
     page = ctx.new_page()
+    try:
+      from playwright.sync_api import TimeoutError as PwTimeout
+    except ImportError:
+      PwTimeout = TimeoutError
     try:
       page.goto(watch_url, wait_until="domcontentloaded", timeout=45000)
     except PwTimeout:
       pass
-    return pw, browser, ctx, page
+    return ctx, page
 
   def _browser_html(self, session, watch_url, debug=False):
-    pw, browser, ctx, page = self._browser_pages(session, watch_url, debug)
+    ctx, page = self._browser_pages(session, watch_url, debug)
     try:
       html = page.content()
       for c in ctx.cookies():
@@ -178,18 +180,10 @@ class RumbleAuth(AuthProvider):
         ctx.close()
       except Exception:
         pass
-      try:
-        browser.close()
-      except Exception:
-        pass
-      try:
-        pw.stop()
-      except Exception:
-        pass
 
   def _browser_json(self, session, watch_url, key, debug=False):
     import json
-    pw, browser, ctx, page = self._browser_pages(session, watch_url, debug)
+    ctx, page = self._browser_pages(session, watch_url, debug)
     try:
       # In-page fetch (not page.request): inherits the page's referer,
       # cookies, and sec-fetch-mode:cors/site:same-origin — byte-identical
@@ -220,14 +214,6 @@ class RumbleAuth(AuthProvider):
         ctx.close()
       except Exception:
         pass
-      try:
-        browser.close()
-      except Exception:
-        pass
-      try:
-        pw.stop()
-      except Exception:
-        pass
 
   def resolve_embed(self, session, watch_url, debug=False):
     """Return the embedJS URL (stable per video key) for --login-only."""
@@ -237,9 +223,10 @@ class RumbleAuth(AuthProvider):
   def resolve_playlist(self, session, watch_url, debug=False):
     """Full public resolve: watch → embedJS → muxed renditions + audio.
 
-    Returns (videos, audios, qmap, title). Video segments are absolute
-    .ts URLs (chunklists fetched eagerly — 4 small tar GETs); sizes are
-    exact meta bytes; audio is the single shared .aac direct file.
+    Tar variant: video segments are absolute .ts URLs (chunklists fetched
+    eagerly); progressive-mp4 variant: one direct .mp4 URL per rung
+    (``progressive: True``) with empty audio segments. Sizes are exact
+    meta bytes; tar audio is the single shared .aac direct file.
     """
     from ..core.fetcher import fetch_hls_chunklist
     _key, data = self._bootstrap(session, watch_url, debug)
@@ -278,11 +265,51 @@ class RumbleAuth(AuthProvider):
         "muxed": True,
       })
     if not videos:
-      fail("rumble embedJS has no playable renditions.")
+      # Progressive-mp4 variant (no tar chunklists): ua.mp4 carries
+      # complete muxed files, one URL per rung — all labels exposed.
+      mp4s = ua.get("mp4") or {}
+
+      def _rung_key(label):
+        try:
+          return int(label)
+        except (TypeError, ValueError):
+          return -1
+
+      for label in sorted(mp4s, key=_rung_key, reverse=True):
+        entry = mp4s.get(label) or {}
+        meta = entry.get("meta") or {}
+        mp4_url = entry.get("url")
+        if not mp4_url:
+          continue
+        vid = f"rumble-{label}p"
+        qmap[vid] = f"{label}p"
+        videos.append({
+          "id": vid,
+          "width": meta.get("w"),
+          "height": meta.get("h") or _rung_key(label),
+          "bitrate": (meta.get("bitrate") or 0) * 1000,
+          "codecs": None,
+          "duration": duration,
+          "framerate": fps,
+          "init_segment": None,
+          "base_url": "",
+          "segments": [{"url": mp4_url}],
+          "size_total": meta.get("size") or 0,
+          "muxed": True,
+          "progressive": True,
+        })
+    if not videos:
+      tar_keys = sorted((tar or {}).keys())
+      mp4_keys = sorted(((ua.get("mp4")) or {}).keys())
+      fail("rumble embedJS has no playable renditions "
+           f"(ua_keys={sorted(ua.keys())} tar_keys={tar_keys} "
+           f"mp4_keys={mp4_keys} live={data.get('live')} "
+           f"title={str(title)[:40]!r} duration={duration}).")
     videos.sort(key=lambda v: v["bitrate"], reverse=True)
     audio_entry = (ua.get("audio") or {}).get("192") or {}
     audio_meta = audio_entry.get("meta") or {}
     audio_url = audio_entry.get("url")
+    progressive = bool(videos and videos[0].get("progressive"))
     audios = [{
       "id": "rumble-audio",
       "bitrate": (audio_meta.get("bitrate") or 0) * 1000,
@@ -292,11 +319,15 @@ class RumbleAuth(AuthProvider):
       "channels": None,
       "init_segment": None,
       "base_url": "",
-      "segments": [{"url": audio_url, "size": audio_meta.get("size") or 0}] if audio_url else [],
+      # Progressive mp4s already carry audio — nothing to fetch.
+      "segments": [] if progressive else (
+        [{"url": audio_url, "size": audio_meta.get("size") or 0}]
+        if audio_url else []),
     }]
     if debug:
       import sys
       print(f"debug-login: rumble title={title[:60]!r} duration={duration} "
-            f"renditions={len(videos)} audio_segs={len(audios[0]['segments'])}",
+            f"renditions={len(videos)} audio_segs={len(audios[0]['segments'])} "
+            f"progressive={progressive}",
             file=sys.stderr)
     return videos, audios, qmap, title

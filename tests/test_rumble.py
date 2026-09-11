@@ -175,3 +175,80 @@ def test_login_is_noop():
   sentinel = object()
   assert auth.login(sentinel, None, None) is sentinel
   assert segment_headers("https://rumble.com/vx")["Referer"] == "https://rumble.com/vx"
+
+
+MP4_ONLY_EMBEDJS = {
+  "title": "LoopOfTheWeek #1",
+  "duration": 110,
+  "fps": 60,
+  "live": 0,
+  "ua": {
+    "mp4": {
+      "360": {"url": "https://cdn/x.baa.mp4",
+              "meta": {"bitrate": 641, "size": 8853192, "w": 640, "h": 360}},
+      "2160": {"url": "https://cdn/x.jaa.mp4",
+               "meta": {"bitrate": 9301, "size": 128463720, "w": 3840, "h": 2160}},
+      "1080": {"url": "https://cdn/x.haa.mp4",
+               "meta": {"bitrate": 4010, "size": 55383600, "w": 1920, "h": 1080}},
+    },
+    "audio": {
+      "192": {"url": "https://cdn/x.Gaa.aac",
+              "meta": {"bitrate": 194, "size": 2652673, "w": 0, "h": 0}},
+    },
+  },
+}
+
+
+def _mp4_session(payload):
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      if "embedJS" in url:
+        return _Resp(200, payload=dict(payload))
+      return _Resp(200, text=WATCH_HTML)
+  return _Stub()
+
+
+def test_resolve_playlist_progressive_mp4_all_rungs():
+  auth = RumbleAuth()
+  videos, audios, qmap, title = auth.resolve_playlist(
+    _mp4_session(MP4_ONLY_EMBEDJS), WATCH_URL)
+  assert title == "LoopOfTheWeek #1"
+  # all rungs exposed (incl. 2160), bitrate-desc, progressive marked
+  assert [v["id"] for v in videos] == ["rumble-2160p", "rumble-1080p", "rumble-360p"]
+  assert all(v["progressive"] and v["muxed"] for v in videos)
+  assert all(len(v["segments"]) == 1 for v in videos)
+  assert videos[0]["size_total"] == 128463720
+  assert videos[0]["height"] == 2160
+  assert qmap["rumble-2160p"] == "2160p"
+  # audio rides inside the mp4 — empty rendition, sizes unaffected
+  assert audios[0]["segments"] == []
+
+
+def test_resolve_playlist_prefers_tar_over_mp4():
+  both = dict(MP4_ONLY_EMBEDJS)
+  both["ua"] = dict(MP4_ONLY_EMBEDJS["ua"], tar={
+    "360": {"url": "https://cdn/x.baa.tar?r_file=chunklist.m3u8",
+            "meta": {"bitrate": 682, "size": 12431360, "w": 204, "h": 360}},
+  })
+  auth = RumbleAuth()
+
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      if "embedJS" in url:
+        return _Resp(200, payload=dict(both))
+      if ".tar?" in url:
+        return _Resp(200, content=_tar_bytes(["https://cdn/s0.ts"]))
+      return _Resp(200, text=WATCH_HTML)
+
+  videos, audios, _qmap, _title = auth.resolve_playlist(_Stub(), WATCH_URL)
+  assert [v["id"] for v in videos] == ["rumble-360p"]
+  assert not videos[0].get("progressive")
+  assert audios[0]["segments"] != []
+
+
+def test_resolve_playlist_empty_shape_reports_keys(capsys):
+  empty = {"title": "x", "duration": 1, "live": 0, "ua": {"mp4": {}, "tar": {}}}
+  with pytest.raises(SystemExit):
+    RumbleAuth().resolve_playlist(_mp4_session(empty), WATCH_URL)
+  err = capsys.readouterr().err
+  assert "tar_keys=[]" in err and "mp4_keys=[]" in err and "ua_keys=" in err

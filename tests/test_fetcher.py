@@ -5,7 +5,7 @@ import tarfile
 
 import pytest
 
-from titanium_video_downloader.core.fetcher import fetch_hls_chunklist
+from titanium_video_downloader.core.fetcher import download_direct, fetch_hls_chunklist
 
 M3U8 = ("#EXTM3U\n#EXT-X-VERSION:3\n"
         "#EXTINF:6.0,\nhttps://cdn/s0.ts\n"
@@ -56,6 +56,68 @@ def test_empty_chunklist_fails():
 def test_garbage_tar_fails():
   with pytest.raises(SystemExit):
     fetch_hls_chunklist(_session(b"not-a-tar-at-all"), TAR_URL, "https://rumble.com/vx")
+
+
+class _DResp:
+  def __init__(self, status=200, body=b"", headers=None):
+    self.status_code = status
+    self._body = body
+    self.headers = headers or {}
+
+  def iter_content(self, chunk_size=1):
+    for i in range(0, len(self._body), chunk_size):
+      yield self._body[i:i + chunk_size]
+
+
+def _d_session(resp, seen):
+  class _Stub:
+    def get(self, url, headers=None, timeout=None, stream=False):
+      seen["headers"] = headers
+      seen["stream"] = stream
+      return resp
+  return _Stub()
+
+
+def test_download_direct_fresh(tmp_path):
+  seen = {}
+  dest = tmp_path / "v.mp4"
+  out = download_direct("video", "https://cdn/v.mp4", dest,
+                        _d_session(_DResp(200, b"0123456789",
+                                          {"Content-Length": "10"}), seen),
+                        headers={"Referer": "https://rumble.com/vx"},
+                        expected_size=10)
+  assert out == dest and dest.read_bytes() == b"0123456789"
+  assert seen["stream"] is True
+
+
+def test_download_direct_resumes_partial(tmp_path):
+  dest = tmp_path / "v.mp4"
+  dest.write_bytes(b"01234")
+  seen = {}
+  out = download_direct("video", "https://cdn/v.mp4", dest,
+                        _d_session(_DResp(206, b"56789",
+                                          {"Content-Range": "bytes 5-9/10"}), seen),
+                        expected_size=10)
+  assert out == dest and dest.read_bytes() == b"0123456789"
+  assert seen["headers"]["Range"] == "bytes=5-"
+
+
+def test_download_direct_size_mismatch_fails(tmp_path):
+  dest = tmp_path / "v.mp4"
+  with pytest.raises(SystemExit):
+    download_direct("video", "https://cdn/v.mp4", dest,
+                    _d_session(_DResp(200, b"short",
+                                      {"Content-Length": "5"}), {}),
+                    expected_size=10)
+
+
+def test_download_direct_416_when_complete_returns(tmp_path):
+  dest = tmp_path / "v.mp4"
+  dest.write_bytes(b"0123456789")
+  out = download_direct("video", "https://cdn/v.mp4", dest,
+                        _d_session(_DResp(416, b""), {}),
+                        expected_size=10)
+  assert out == dest and dest.read_bytes() == b"0123456789"
 
 
 def test_http_error_fails():
