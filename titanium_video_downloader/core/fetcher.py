@@ -109,6 +109,11 @@ def fetch_hls_chunklist(session, tar_url, referer):
   return [urljoin(tar_url, u) for u in uris]
 
 
+# Manifest checkpoint cadence: flush sorted(done) this often, so a crash
+# or ENOSPC mid-batch still leaves recent progress for resume.
+MANIFEST_EVERY = 10
+
+
 def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
                        suffix=".m4s", headers=None, assemble=True):
   """Download segments with resume manifest; assemble the combined file.
@@ -159,37 +164,46 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
     eta = f"{(total - n) / rate:.0f}s" if rate > 0 and n < total else "--"
     _write_line(f"{kind}: {n}/{total} segs, {rate:.1f} seg/s, ETA {eta}")
 
+  def _flush_manifest():
+    try:
+      manifest.write_text(json.dumps(sorted(done)))
+    except OSError as e:
+      io_fail(f"{kind} manifest write", e)
+
   def _mark(idx):
     with lock:
       done.add(idx)
+      if len(done) % MANIFEST_EVERY == 0:
+        _flush_manifest()
       if bar:
         bar.update(1)
       else:
         _render()
 
   if todo:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
-      futs = {ex.submit(_get_with_retry, session, seg_urls[i], i,
-                        headers): i for i in todo}
-      try:
-        for fut in concurrent.futures.as_completed(futs):
-          try:
-            idx, data = fut.result()
-          except RuntimeError as e:
-            errors.append(str(e))
-          else:
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
+        futs = {ex.submit(_get_with_retry, session, seg_urls[i], i,
+                          headers): i for i in todo}
+        try:
+          for fut in concurrent.futures.as_completed(futs):
             try:
-              (parts / f"{idx:05d}{suffix}").write_bytes(data)
-            except OSError as e:
-              io_fail(f"{kind} segment {idx} write", e)
-            _mark(idx)
-      finally:
-        if bar:
-          bar.close()
-      try:
-        manifest.write_text(json.dumps(sorted(done)))
-      except OSError as e:
-        io_fail(f"{kind} manifest write", e)
+              idx, data = fut.result()
+            except RuntimeError as e:
+              errors.append(str(e))
+            else:
+              try:
+                (parts / f"{idx:05d}{suffix}").write_bytes(data)
+              except OSError as e:
+                io_fail(f"{kind} segment {idx} write", e)
+              _mark(idx)
+        finally:
+          if bar:
+            bar.close()
+    except BaseException:
+      _flush_manifest()
+      raise
+    _flush_manifest()
   if errors:
     fail(f"{kind} download had {len(errors)} failed segment(s), e.g.: {errors[0]}")
   if len(done) != total:

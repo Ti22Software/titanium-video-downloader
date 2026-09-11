@@ -130,8 +130,9 @@ vimeo, rumble, fetcher, remux, ffmpeg resolve).
 
 Key behaviors: AAC preferred over Opus; CDN fallback (`akfire` →
 `fastly_skyfire`); resume via `.ti22/` manifest (deletes on success unless
-`--keep-intermediate`); output refusal if target exists; portable filenames
-(Windows-reserved set, strictest OS).
+`--keep-intermediate`; flushed every 10 segments and on failure, so crashes
+and ENOSPC leave recent progress); output refusal if target exists; portable
+filenames (Windows-reserved set, strictest OS).
 
 ## Target architecture (Phase 1: package + events)
 
