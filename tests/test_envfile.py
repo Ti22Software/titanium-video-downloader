@@ -47,6 +47,30 @@ def test_load_missing_returns_none(tmp_path):
   assert load_dotenv(tmp_path / "nope.env") is None
 
 
+def test_load_names_loaded_file(tmp_path, capsys):
+  f = tmp_path / ".env"
+  f.write_text("TI22_TEST_LOAD_A=b\n")
+  assert load_dotenv(f) == f
+  assert f"loaded .env from {f}" in capsys.readouterr().err
+
+
+def test_load_names_first_hit_cwd(tmp_path, monkeypatch, capsys):
+  work = tmp_path / "work"
+  work.mkdir()
+  (work / ".env").write_text("TI22_TEST_LOAD_B=1\n")
+  cfg = tmp_path / "cfg"
+  cfg.mkdir()
+  (cfg / ".env").write_text("TI22_TEST_LOAD_B=2\n")
+  monkeypatch.chdir(work)
+  monkeypatch.setenv("TI22_VIDEO_DL_CONFIG_DIR", str(cfg))
+  found = load_dotenv()
+  assert found == work / ".env"
+  err = capsys.readouterr().err
+  assert f"loaded .env from {work / '.env'}" in err
+  import os
+  assert os.environ["TI22_TEST_LOAD_B"] == "1"
+
+
 def test_default_config_dir_override(monkeypatch, tmp_path):
   monkeypatch.setenv("TI22_VIDEO_DL_CONFIG_DIR", str(tmp_path))
   assert default_config_dir() == tmp_path

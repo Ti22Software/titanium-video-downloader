@@ -61,7 +61,10 @@ def parse_dotenv_text(text):
 def load_dotenv(path=None):
   """Load .env into os.environ via setdefault (real env always wins).
 
-  Returns the Path loaded, or None. Warnings name lines, never values.
+  Returns the Path loaded, or None. Always names the loaded file (path
+  only, never values): with two lookup locations (./.env, then the app
+  config dir), silent first-hit-wins otherwise lets you edit the wrong
+  file with full confidence. Warnings name lines, never values.
   """
   import sys
   target = Path(path) if path else find_dotenv()
@@ -74,6 +77,7 @@ def load_dotenv(path=None):
     return None
   for key, value in pairs.items():
     os.environ.setdefault(key, value)
+  print(f"note: loaded .env from {target}", file=sys.stderr)
   if bad:
     lines = ",".join(str(n) for n in bad)
     print(f"note: ignoring {len(bad)} unparsable .env line(s) "
