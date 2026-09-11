@@ -10,7 +10,7 @@ from pathlib import Path
 
 APP_VENDOR = "titanium-software"
 APP_NAME = "ti22-video-dl"
-CONFIG_DIR_ENV = "TI22_CONFIG_DIR"
+CONFIG_DIR_ENV = "TI22_VIDEO_DL_CONFIG_DIR"
 
 
 def default_config_dir():

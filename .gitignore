@@ -5,6 +5,7 @@
 !ARCHITECTURE.md
 !README.md
 !LICENSE
+!.env.example
 !.gitignore
 !.python-version
 !pyproject.toml

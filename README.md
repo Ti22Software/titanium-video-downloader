@@ -133,8 +133,8 @@ This runs the 86 offline tests — parsers, auth markers, stubbed logins, creden
 **StudyGateway (needs login once — browser handles the reCAPTCHA):**
 
 ```bash
-export TI22_STUDYGATEWAY_EMAIL='you@example.com'
-read -s TI22_STUDYGATEWAY_PASSWORD; export TI22_STUDYGATEWAY_PASSWORD
+export TI22_VIDEO_DL_STUDYGATEWAY_EMAIL='you@example.com'
+read -s TI22_VIDEO_DL_STUDYGATEWAY_PASSWORD; export TI22_VIDEO_DL_STUDYGATEWAY_PASSWORD
 .venv/bin/ti22-video-dl "https://watch.studygateway.com/.../videos/<slug>" --use-browser-login -o "talk.mp4"
 ```
 
@@ -160,13 +160,12 @@ read -s TI22_STUDYGATEWAY_PASSWORD; export TI22_STUDYGATEWAY_PASSWORD
 
 ## Credentials and auth
 
-Precedence for every site: `--email` / `--password` flags → site env vars → generic env vars → interactive prompt (email known + terminal). Values are never logged; `--debug-login` prints only redacted metadata (`cred_source=flag|site-env|env|prompt`, cookie *names*).
+Precedence for every site: `--email` / `--password` flags → `TI22_VIDEO_DL_<SITE>_*` env vars → interactive password prompt (email known + terminal). No generic fallback by design. Values are never logged; `--debug-login` prints only redacted metadata (`cred_source=flag|site-env|prompt|missing`, cookie *names*).
 
 | Variable pattern | Example | For |
 | --- | --- | --- |
-| `TI22_<SITE>_EMAIL` / `TI22_<SITE>_PASSWORD` | `TI22_STUDYGATEWAY_EMAIL` | One site (`STUDYGATEWAY`, `VIMEO`, `RIGHTNOWMEDIA`, `GENERIC`, `RUMBLE`) |
-| `TI22_EMAIL` / `TI22_PASSWORD` | — | Fallback for single-site users |
-| `TI22_CONFIG_DIR` | — | Overrides the config dir location |
+| `TI22_VIDEO_DL_<SITE>_EMAIL` / `TI22_VIDEO_DL_<SITE>_PASSWORD` | `TI22_VIDEO_DL_STUDYGATEWAY_EMAIL` | One site (`STUDYGATEWAY`, `VIMEO`, `RUMBLE`, `RIGHTNOWMEDIA`, `GENERIC`) |
+| `TI22_VIDEO_DL_CONFIG_DIR` | — | Overrides the config dir location |
 
 Optional `.env` file (flat `KEY=VALUE`, real environment always wins): `./.env` first, then `~/.config/titanium-software/ti22-video-dl/.env` (`%APPDATA%\titanium-software\ti22-video-dl\.env` on Windows).
 

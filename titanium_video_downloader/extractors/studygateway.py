@@ -55,7 +55,8 @@ class StudyGatewayAuth(AuthProvider):
       raise AuthError("playwright not installed — run: pip install playwright "
                       "&& playwright install chromium, or use --cookies.")
     if not email or not password:
-      raise AuthError("browser login needs --email/--password or TI22_EMAIL/TI22_PASSWORD.")
+      raise AuthError("browser login needs --email/--password or "
+                      "TI22_VIDEO_DL_STUDYGATEWAY_EMAIL/PASSWORD.")
     with sync_playwright() as pw:
       browser = pw.chromium.launch(headless=not headed)
       ctx = browser.new_context(user_agent=UA)

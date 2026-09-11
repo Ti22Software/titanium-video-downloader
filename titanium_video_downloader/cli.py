@@ -47,12 +47,10 @@ register_provider(GenericAuth())
 
 
 def _env_creds_present(site_key):
-  """True if any credential env (site-scoped or generic) is configured."""
+  """True if any credential env for the site is configured."""
   import os
   key = (site_key or "").upper()
-  names = ["TI22_EMAIL", "TI22_PASSWORD"]
-  if key:
-    names += [f"TI22_{key}_EMAIL", f"TI22_{key}_PASSWORD"]
+  names = [f"TI22_VIDEO_DL_{key}_EMAIL", f"TI22_VIDEO_DL_{key}_PASSWORD"] if key else []
   return any(os.environ.get(n) for n in names)
 
 
@@ -68,7 +66,7 @@ def _auth_mode(args, prov):
     if prov.requires_auth:
       site = prov.site_key.upper()
       fail(f"{prov.site_key} requires auth — omit --no-auth or pass "
-           f"--email/--password (TI22_{site}_EMAIL).")
+           f"--email/--password (TI22_VIDEO_DL_{site}_EMAIL).")
     return "none"
   if args.cookies and not args.use_browser_login:
     return "cookies"
@@ -99,8 +97,8 @@ def main(argv=None):
                   help="parallel segment downloads (default 4)")
   ap.add_argument("--keep-intermediate", action="store_true",
                   help="keep video/audio intermediates and parts dir")
-  ap.add_argument("--email", default=None, help="login email (or TI22_EMAIL)")
-  ap.add_argument("--password", default=None, help="login password (or TI22_PASSWORD)")
+  ap.add_argument("--email", default=None, help="login email (or TI22_VIDEO_DL_<SITE>_EMAIL)")
+  ap.add_argument("--password", default=None, help="login password (or TI22_VIDEO_DL_<SITE>_PASSWORD)")
   ap.add_argument("--cookies", default=None, help="Netscape cookies.txt fallback for bot-blocked login (export logged-in browser cookies for .studygateway.com)")
   ap.add_argument("--login-only", action="store_true",
                   help="login + resolve embed URL, print it, and exit")

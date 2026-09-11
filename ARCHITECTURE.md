@@ -22,7 +22,7 @@ Password logins auto-upgrade to the browser harvest.
 
 ```
 watch.studygateway.com/.../videos/<slug>  (auto-login: --email/--password
-  or TI22_EMAIL/TI22_PASSWORD auto-upgrade to browser harvest;
+  or TI22_VIDEO_DL_STUDYGATEWAY_EMAIL/PASSWORD auto-upgrade to browser harvest;
   --cookies Netscape fallback; --login-only test)
   → browser SAML login (Chromium passes reCAPTCHA v3 natively, follows
     saml/consume → browse?ticket=, exports _session)
@@ -60,13 +60,15 @@ provider). `--no-auth` skips login entirely on
 sites with `requires_auth=False` (public vimeo); auth-required sites fail
 fast naming the site. See Phase 3.
 
-Credentials (precedence: flags > site env > generic env > tty prompt):
-`--email/--password`, `TI22_<SITE>_EMAIL/PASSWORD` (`TI22_STUDYGATEWAY_EMAIL`,
-`TI22_VIMEO_EMAIL`, `TI22_RIGHTNOWMEDIA_EMAIL`, `TI22_GENERIC_EMAIL`),
-`TI22_EMAIL/PASSWORD` fallback. Optional `.env` (`./.env`, then
+Credentials (precedence: flags > site env > tty prompt; no generic
+fallback by design — app-qualified names keep shared scopes collision-free):
+`--email/--password`, `TI22_VIDEO_DL_<SITE>_EMAIL/PASSWORD`
+(`TI22_VIDEO_DL_STUDYGATEWAY_EMAIL`, `TI22_VIDEO_DL_VIMEO_EMAIL`,
+`TI22_VIDEO_DL_RIGHTNOWMEDIA_EMAIL`, `TI22_VIDEO_DL_GENERIC_EMAIL`).
+Optional `.env` (`./.env`, then
 `~/.config/titanium-software/ti22-video-dl/.env`,
 `%APPDATA%/titanium-software/ti22-video-dl/.env`, overridable via
-`TI22_CONFIG_DIR`): flat stdlib-parsed `KEY=VALUE`, real env always wins.
+`TI22_VIDEO_DL_CONFIG_DIR`): flat stdlib-parsed `KEY=VALUE`, real env always wins.
 
 Quality selection: `--quality` (label/`best`/id-prefix, default `best`),
 `--list-qualities` (human table, stdout), `--list-qualities-json` (JSON
@@ -193,6 +195,12 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
   identical, 1-byte container delta, null-decode clean).
 - **Signing: deferred.** Expect SmartScreen/Gatekeeper warnings until
   Windows cert + Apple Developer ID are wired into CI as secrets.
+- **Installer offers the config dir.** The loader only reads — nothing
+  creates `~/.config/titanium-software/ti22-video-dl/` (Linux/macOS,
+  offer default-yes) or `%APPDATA%\titanium-software\ti22-video-dl\`
+  (Windows, no choice offered — Program Files isn't user-writable, so
+  per-user config is mandatory). Optionally seed a commented `.env`
+  template (shaped like `.env.example`, values empty).
 - **CI matrix** (acceptance criterion of Phase 1): one workflow ×
   `[windows, ubuntu, macos]` runners → native exe each → smoke-test the
   *bundle* (`--help` + offline parser tests) → attach to GitHub Release on

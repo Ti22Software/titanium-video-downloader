@@ -65,33 +65,28 @@ def _cred_source(args, site_key):
   if args.email or args.password:
     return "flag"
   key = (site_key or "").upper()
-  if key and (os.environ.get(f"TI22_{key}_EMAIL")
-              or os.environ.get(f"TI22_{key}_PASSWORD")):
+  if key and (os.environ.get(f"TI22_VIDEO_DL_{key}_EMAIL")
+              or os.environ.get(f"TI22_VIDEO_DL_{key}_PASSWORD")):
     return "site-env"
-  if os.environ.get("TI22_EMAIL") or os.environ.get("TI22_PASSWORD"):
-    return "env"
   return "missing"
 
 
 def get_creds(args, site_key=None):
   """Return (email, password, source) for a site.
 
-  Per-field precedence: CLI flags > TI22_<SITE>_EMAIL/PASSWORD >
-  TI22_EMAIL/PASSWORD, then interactive password prompt when an email is
-  known and stdin is a tty. Source is redacted metadata for --debug-login;
-  values are never logged.
+  Per-field precedence: CLI flags > TI22_VIDEO_DL_<SITE>_EMAIL/PASSWORD,
+  then interactive password prompt when an email is known and stdin is a
+  tty. There is deliberately no generic fallback: app-qualified names keep
+  shared shell scopes collision-free across Titanium packages. Source is
+  redacted metadata for --debug-login; values are never logged.
   """
   key = (site_key or "").upper()
   email = args.email
   password = args.password
   if email is None and key:
-    email = os.environ.get(f"TI22_{key}_EMAIL")
+    email = os.environ.get(f"TI22_VIDEO_DL_{key}_EMAIL")
   if password is None and key:
-    password = os.environ.get(f"TI22_{key}_PASSWORD")
-  if email is None:
-    email = os.environ.get("TI22_EMAIL")
-  if password is None:
-    password = os.environ.get("TI22_PASSWORD")
+    password = os.environ.get(f"TI22_VIDEO_DL_{key}_PASSWORD")
   source = _cred_source(args, site_key)
   if email and password:
     return email, password, source
