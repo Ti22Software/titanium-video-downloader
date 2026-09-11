@@ -81,6 +81,50 @@ def select_video(videos, quality):
   fail(f"unknown quality '{quality}' (have: {avail}, best).")
 
 
+def find_video(videos, quality):
+  """Non-failing selection: return (video|None, relation).
+
+  relation is "exact" (best/height/id-prefix hit), "below"/"above" (nearest
+  rung around a numeric miss, below preferred), or "missing" (non-numeric
+  miss — no rung to order against, so no fallback possible). Batch reuse:
+  same helper feeds per-video resolution later.
+  """
+  if quality in ("best", "highest", "max"):
+    return videos[0], "exact"
+  m = re.fullmatch(r"(\d+)\s*p?", quality.strip().lower())
+  if m:
+    want = int(m.group(1))
+    for v in videos:
+      if v.get("height") == want:
+        return v, "exact"
+    ordered = order_by_height(videos)
+    below = [v for v in ordered if (v.get("height") or 0) < want]
+    if below:
+      return below[0], "below"
+    above = [v for v in ordered if (v.get("height") or 0) > want]
+    if above:
+      return above[-1], "above"
+    return None, "missing"
+  for v in videos:
+    if v.get("id", "").startswith(quality):
+      return v, "exact"
+  return None, "missing"
+
+
+def interpret_ask(raw, n, fallback_idx):
+  """Parse an ask-mode answer: 1-based index, s(kip), or "" for fallback.
+
+  Pure (stdin injected) so batch reuse and tests share it. fail()s on
+  garbage, like pick_index.
+  """
+  text = (raw or "").strip().lower()
+  if text == "":
+    return fallback_idx
+  if text in ("s", "skip"):
+    return None
+  return pick_index(n, text)
+
+
 def select_audio(audios):
   aac = [a for a in audios if (a.get("codecs") or "").startswith("mp4a.")]
   pool = aac or audios

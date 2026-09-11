@@ -152,6 +152,9 @@ read -s TI22_VIDEO_DL_STUDYGATEWAY_PASSWORD; export TI22_VIDEO_DL_STUDYGATEWAY_P
 .venv/bin/ti22-video-dl "<url>" --list-qualities-json   # JSON array for scripts/front-ends
 .venv/bin/ti22-video-dl "<url>" --pick -o "clip.mp4"    # interactive numbered picker
 .venv/bin/ti22-video-dl "<url>" --quality 720p -o "clip.mp4"
+.venv/bin/ti22-video-dl "<url>" --quality 480p -o "clip.mp4"   # missing rung → 360p fallback, announced
+.venv/bin/ti22-video-dl "<url>" --quality 480p --on-missing-quality=fail
+.venv/bin/ti22-video-dl "<url>" --quality 480p --on-missing-quality=ask  # full list + skip, TTY only
 ```
 
 `size` everywhere means estimated *total* download (video rung + the selected audio rendition, container overhead excluded) — an upper bound, typically landing within ~5% above the final file.
@@ -203,6 +206,7 @@ Only download content you have the rights to. This tool is built for your own vi
 ## Roadmap
 
 - Event bus (`events.py`) — the GUI prerequisite; `--list-qualities-json`'s stdout discipline is the down payment
+- User config file (default quality, `--on-missing-quality` mode, dirs, concurrency) — CLI flags stay authoritative
 - RightNow Media probe (login flow + DRM check), then implementation
 - Batch/series downloads (persistent browser across videos, per-file determinism)
 - PyInstaller per-OS bundles (`ti22-video-dl` + Chromium + ffmpeg, built natively per platform)

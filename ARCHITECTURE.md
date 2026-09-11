@@ -74,6 +74,11 @@ Quality selection: `--quality` (label/`best`/id-prefix, default `best`),
 `--list-qualities` (human table, stdout), `--list-qualities-json` (JSON
 array for front-ends, stdout), `--pick` (TTY-only numbered picker feeding
 the normal download path; mutually exclusive with the other three).
+Missing rung + `--on-missing-quality` (default `fallback`): exact hits pass
+silently; `fallback` takes nearest-below (nearest-above at the floor) with
+an announcing note; `fail` keeps the legacy error; `ask` offers the full
+numbered list plus skip on TTY, refuses on non-TTY. Non-numeric misses fail
+in all modes. `--pick` bypasses the flag (a chosen rung cannot miss).
 `size` everywhere means estimated TOTAL download = selected video rung +
 `select_audio()` rendition (container `moov` overhead excluded); JSON also
 carries `video_size`/`audio_size` breakdown keys.

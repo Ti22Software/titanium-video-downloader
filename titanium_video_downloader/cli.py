@@ -17,6 +17,8 @@ from .core.envfile import load_dotenv
 from .core.fetcher import download_rendition, fetch_json
 from .core.models import (
   audio_label,
+  find_video,
+  interpret_ask,
   label_for,
   parse_playlist,
   pick_index,
@@ -89,6 +91,11 @@ def main(argv=None):
                   help="list renditions as a JSON array (front-end integration) and exit")
   ap.add_argument("--pick", action="store_true",
                   help="interactively pick a quality from the list, then download")
+  ap.add_argument("--on-missing-quality",
+                  choices=("fallback", "fail", "ask"), default="fallback",
+                  help="when the requested quality doesn't exist: use nearest "
+                       "below (fallback), fail, or ask with the full list "
+                       "(no effect with --pick)")
   ap.add_argument("--ffmpeg-path", default=None,
                   help="explicit ffmpeg binary (default: imageio-ffmpeg extra, then PATH)")
   ap.add_argument("--quality", default="best",
@@ -237,19 +244,51 @@ def main(argv=None):
     print(json.dumps(quality_items(videos, audios, qmap), indent=2))
     return 0
 
-  if args.pick:
-    if not sys.stdin.isatty():
-      fail("--pick needs an interactive terminal.")
-    rows = quality_items(videos, audios, qmap)
+  rows = quality_items(videos, audios, qmap)
+
+  def _print_rows():
     for i, item in enumerate(rows, 1):
       print(f"  [{i}] {item['quality']:<8}{item['size'] / 1e6:>9.1f}M  "
             f"{item['bitrate']:>9}  {item['id']}", file=sys.stderr)
+
+  if args.pick:
+    if not sys.stdin.isatty():
+      fail("--pick needs an interactive terminal.")
+    _print_rows()
     sys.stderr.write(f"pick quality [1-{len(rows)}] (default 1): ")
     sys.stderr.flush()
     picked = rows[pick_index(len(rows), sys.stdin.readline()) - 1]
     video = next(v for v in videos if v["id"] == picked["id"])
   else:
-    video = select_video(videos, args.quality)
+    video, relation = find_video(videos, args.quality)
+    if relation == "exact":
+      pass
+    elif args.on_missing_quality == "fail" or video is None:
+      video = select_video(videos, args.quality)  # fails, established messages
+    elif args.on_missing_quality == "fallback":
+      print(f"note: quality '{args.quality}' not available — using "
+            f"{label_for(video)} (nearest {relation}, "
+            "--on-missing-quality=fallback)", file=sys.stderr)
+    else:  # ask (batch reuse: same helper shape feeds per-video prompts later)
+      if not sys.stdin.isatty():
+        fail("--on-missing-quality=ask needs an interactive terminal "
+             "(choose fallback or fail for scripts).")
+      _print_rows()
+      fb_idx = next(i for i, item in enumerate(rows, 1) if item["id"] == video["id"])
+      sys.stderr.write(f"quality '{args.quality}' unavailable — pick "
+                       f"[1-{len(rows)}], s to skip, Enter for "
+                       f"{label_for(video)} fallback (--on-missing-quality=ask): ")
+      sys.stderr.flush()
+      choice = interpret_ask(sys.stdin.readline(), len(rows), fb_idx)
+      if choice is None:
+        print(f"note: skipped '{args.quality}' (--on-missing-quality=ask)",
+              file=sys.stderr)
+        return 0
+      picked = rows[choice - 1]
+      print(f"note: quality '{args.quality}' not available — using "
+            f"{picked['quality']} (picked, --on-missing-quality=ask)",
+            file=sys.stderr)
+      video = next(v for v in videos if v["id"] == picked["id"])
   audio = select_audio(audios)
   v_urls = resolve_segments(playlist_url or "", video)
   a_urls = resolve_segments(playlist_url or "", audio)
