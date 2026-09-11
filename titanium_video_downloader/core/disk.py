@@ -9,7 +9,9 @@ proceeds — fail-open on unknown, fail-closed on known-short.
 """
 
 import errno
+import os
 import shutil
+import sys
 
 from .models import audio_bytes, video_bytes
 from ..extractors.base import fail
@@ -18,7 +20,17 @@ HEADROOM_BYTES = 256 * 1024 * 1024
 
 
 def free_bytes(path):
-  """Free bytes on path's filesystem, or None when unreadable."""
+  """Usable free bytes on path's filesystem, or None when unreadable.
+
+  Unix uses statvfs f_bavail (excludes root-reserved blocks — matches df
+  "Available"); os.statvfs doesn't exist on Windows, which (plus any
+  OSError) falls back to shutil.disk_usage. Unreadable mounts → None.
+  """
+  try:
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
+  except (AttributeError, OSError):
+    pass
   try:
     return shutil.disk_usage(path).free
   except OSError:
@@ -44,8 +56,6 @@ def download_estimate(video, audio):
 
 def check_space(path, needed, label):
   """Fail fast when known-short; warn-and-proceed when unreadable."""
-  from ..extractors.base import fail
-  import sys
   free = free_bytes(path)
   if free is None:
     print(f"note: could not read free space for {label} '{path}' "

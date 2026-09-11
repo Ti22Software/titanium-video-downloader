@@ -247,6 +247,10 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
    in one module with its own tests.
 3. **Scope creep on GUI** — deferred; Phase 1 event bus is the only
    prerequisite.
+4. **Windows long paths** — deep workdirs + long titles can exceed 260
+   chars; no extended-length handling until a real report. Cross-OS
+   otherwise: `f_bavail` (Unix) with `shutil` fallback (Windows),
+   portable errno set, forward-slash concat entries.
 
 ## Conventions
 
