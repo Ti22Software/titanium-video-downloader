@@ -10,7 +10,7 @@ Streaming sites don't hand you a video file; they hand your browser a *recipe* f
 | --- | --- | --- | --- |
 | StudyGateway (VHX OTT) | Full login (SAML + reCAPTCHA-proof browser harvest) | Watch slug → embed iframe token → 60s player config → DASH playlist | ✅ working |
 | Vimeo public (+unlisted) | None needed | Watch page → player config (fast path) or headless Play-click intercept (strict videos) → DASH playlist | ✅ working |
-| Rumble public | None needed | Watch page → video key → embedJS metadata → HLS-TS segments → concat remux (tar variant) or direct progressive MP4 (mp4 variant, all rungs) | ✅ working |
+| Rumble public (watch + shorts) | None needed | Watch page → video key → embedJS metadata (shorts: page feed JSON) → HLS-TS segments → concat remux (tar variant) or direct progressive MP4 (mp4 variant, all rungs) | ✅ working |
 | RightNow Media | Login (planned) | Stub only — needs a login-flow + DRM probe first | 🔲 slot |
 | Unknown login site | Login (planned) | Generic fallback slot — blocked on DRM probe first | 🔲 slot |
 | YouTube | — | Deferred, no module | 🔲 deferred |
@@ -156,6 +156,8 @@ read -s TI22_VIDEO_DL_STUDYGATEWAY_PASSWORD; export TI22_VIDEO_DL_STUDYGATEWAY_P
 .venv/bin/ti22-video-dl "<url>" --quality 480p --on-missing-quality=fail
 .venv/bin/ti22-video-dl "<url>" --quality 480p --on-missing-quality=ask  # full list + skip, TTY only
 ```
+
+No `--quality` means `best` — literally the highest rung published (2160p/4K where offered, e.g. some Rumble mp4s); check `--list-qualities` sizes first when bandwidth matters.
 
 **Batch downloads** (sequential, one shared session + browser):
 

@@ -3,13 +3,14 @@
 Public flow, verified live cookie-less end to end::
 
   watch page (/v<key>-<slug>.html) → video key via oembed <link> tag
-   → GET /embedJS/u3/?request=video&ver=2&v=<key>…
-   → either ua.tar.{360..1080} chunklist URLs + meta (muxed-HLS tail:
-   tar-wrapped chunklist.m3u8 → .ts segments → concat + ffmpeg remux),
-   or ua.mp4.{360..2160} direct progressive .mp4 URLs + meta (all rungs
-   exposed, single Range-resume GET, no ffmpeg — audio rides inside).
-   → shared ua.audio.192 direct .aac + meta (HLS-tar path only;
-   progressive mp4s already carry audio, so that rendition is empty).
+  → GET /embedJS/u3/?request=video&ver=2&v=<key>…
+  → either ua.tar.* chunklists (muxed-HLS tail) or ua.mp4.* direct files
+  → tar-wrapped chunklist.m3u8 → .ts segments → concat + ffmpeg remux,
+    or single Range-resume GET (progressive, no ffmpeg)
+
+  Shorts (/shorts/<id>) carry no oembed key — their application/json feed
+  block holds the main video's mp4 rungs directly (scoped by permalink,
+  sizes via HEAD), reusing the progressive tail.
 
 Differences from the DASH path: renditions are muxed A/V (``muxed: True``,
 ``init_segment: None``), sizes are exact ``meta.size`` bytes (not
@@ -34,8 +35,39 @@ EMBEDJS_URL = ("https://rumble.com/embedJS/u3/?ifr=0&dref=rumble.com"
 # oEmbed discovery tags carry the key: rumble.com/embed/<key>/
 _KEY_RE = re.compile(r"rumble\.com/embed/([A-Za-z0-9]+)", re.IGNORECASE)
 
-# Watch URLs: /v<key>-<slug>.html and /embed/<key>/ forms.
-_WATCH_RE = re.compile(r"^/(?:v[A-Za-z0-9]+-|embed/[A-Za-z0-9]+/?$)", re.IGNORECASE)
+# Watch URLs: /v<key>-<slug>.html, /embed/<key>/, and /shorts/<id> forms.
+# Shorts pages carry no oembed key — their application/json feed block holds
+# the main video's mp4 rungs directly (scoped by permalink/relative_url).
+_WATCH_RE = re.compile(r"^/(?:v[A-Za-z0-9]+-|embed/[A-Za-z0-9]+/?$|shorts/[A-Za-z0-9]+/?$)",
+                       re.IGNORECASE)
+
+# Progressive suffix → height fallback when a rung reports no res label.
+_SUFFIX_HEIGHT = {"baa": 360, "caa": 480, "gaa": 720,
+                  "haa": 1080, "iaa": 1440, "jaa": 2160}
+
+
+def _page_id(watch_url):
+  """Shorts/watch page id from the URL path (shorts id or embed key)."""
+  try:
+    from urllib.parse import urlparse
+    parts = [p for p in (urlparse(watch_url).path or "").split("/") if p]
+  except Exception:
+    return ""
+  if not parts:
+    return ""
+  if parts[0].lower() == "shorts" and len(parts) > 1:
+    return parts[1]
+  if parts[0].lower() == "embed" and len(parts) > 1:
+    return parts[1]
+  return ""
+
+
+def _is_shorts(watch_url):
+  try:
+    from urllib.parse import urlparse
+    return (urlparse(watch_url).path or "").lower().startswith("/shorts/")
+  except Exception:
+    return False
 
 
 def _watch_headers(watch_url):
@@ -66,6 +98,61 @@ def segment_headers(watch_url):
 def _video_key(watch_html):
   m = _KEY_RE.search(watch_html or "")
   return m.group(1) if m else None
+
+
+def _rung_height(entry):
+  """Rung height: explicit res first, suffix map as fallback."""
+  try:
+    res = int(entry.get("res") or entry.get("resolution") or 0)
+  except (TypeError, ValueError):
+    res = 0
+  if res:
+    return res
+  url = entry.get("url") or ""
+  m = re.search(r"\.([a-z]{3})\.mp4(?:[?#]|$)", url)
+  if m:
+    return _SUFFIX_HEIGHT.get(m.group(1).lower(), 0)
+  return 0
+
+
+def _shorts_item(watch_html, watch_url, page_id):
+  """Main-video item from a Shorts page's application/json feed blocks.
+
+  Matches on relative_url, full url, or permalink_id == page id so related
+  preloads never win. Falls back to the lone <source type="video/mp4">
+  tag (single rung, suffix-derived height). fail()s when absent.
+  """
+  import json
+  from urllib.parse import urlparse
+  html = watch_html or ""
+  try:
+    want_path = urlparse(watch_url).path or ""
+  except Exception:
+    want_path = ""
+  for m in re.finditer(r'<script type="application/json">(.*?)</script>',
+                       html, re.S):
+    try:
+      doc = json.loads(m.group(1))
+    except ValueError:
+      continue
+    items = doc.get("items") if isinstance(doc, dict) else None
+    if not isinstance(items, list):
+      continue
+    for item in items:
+      if not isinstance(item, dict):
+        continue
+      if (item.get("relative_url") == want_path
+              or item.get("url") == watch_url
+              or (page_id and item.get("permalink_id") == page_id)):
+        return item
+  m = re.search(r'<source\s+type="video/mp4"\s+src="([^"]+)"', html)
+  if m:
+    return {"title": None, "duration": None, "live": False,
+            "videos": [{"url": m.group(1), "type": "mp4"}]}
+  blocks = len(re.findall(r'<script type="application/json">', html))
+  fail("could not find rumble short video data on page "
+       f"(json_blocks={blocks} page={page_id!r}; removed video or page "
+       "format changed).")
 
 
 class RumbleAuth(AuthProvider):
@@ -215,8 +302,94 @@ class RumbleAuth(AuthProvider):
       except Exception:
         pass
 
+  def _resolve_shorts(self, session, watch_url, debug=False):
+    """Shorts resolve: feed JSON on the page → progressive mp4 rungs.
+
+    Scoped to the page's own video (permalink/relative_url match) so
+    preloaded related shorts never leak in. Sizes via HEAD (CDN is open);
+    a rung whose HEAD fails keeps size 0 and downloads unchecked.
+    """
+    html = self._watch_html(session, watch_url)
+    if html is None:
+      html = self._browser_html(session, watch_url, debug)
+    page_id = _page_id(watch_url)
+    item = _shorts_item(html, watch_url, page_id)
+    if item.get("live"):
+      fail("rumble livestreams are not supported (VOD only).")
+    title = item.get("title") or "video"
+    duration = item.get("duration")
+    rungs = [e for e in (item.get("videos") or [])
+             if isinstance(e, dict) and (e.get("type") or "mp4") == "mp4"
+             and e.get("url")]
+    if not rungs:
+      keys = sorted(item.keys()) if isinstance(item, dict) else []
+      fail("rumble short has no playable mp4 renditions "
+           f"(item_keys={keys} page={page_id!r}).")
+    pw, ph = item.get("video_width") or 0, item.get("video_height") or 0
+    videos = []
+    qmap = {}
+    for e in sorted(rungs, key=lambda e: _rung_height(e), reverse=True):
+      height = _rung_height(e)
+      vid = f"rumble-{height}p"
+      qmap[vid] = f"{height}p"
+      width = int(round(height * pw / ph)) if pw and ph else None
+      size = self._head_size(session, e["url"], watch_url, debug)
+      videos.append({
+        "id": vid,
+        "width": width,
+        "height": height,
+        "bitrate": (e.get("bitrate_kbps") or 0) * 1000,
+        "codecs": None,
+        "duration": duration,
+        "framerate": None,
+        "init_segment": None,
+        "base_url": "",
+        "segments": [{"url": e["url"]}],
+        "size_total": size,
+        "muxed": True,
+        "progressive": True,
+      })
+    videos.sort(key=lambda v: v["bitrate"], reverse=True)
+    audios = [{
+      "id": "rumble-audio",
+      "bitrate": 0,
+      "codecs": "mp4a.40.2",
+      "mime_type": "audio/aac",
+      "sample_rate": None,
+      "channels": None,
+      "init_segment": None,
+      "base_url": "",
+      # Progressive mp4s already carry audio — nothing to fetch.
+      "segments": [],
+    }]
+    if debug:
+      import sys
+      print(f"debug-login: rumble short title={title[:60]!r} "
+            f"duration={duration} renditions={len(videos)}",
+            file=sys.stderr)
+    return videos, audios, qmap, title
+
+  def _head_size(self, session, url, referer, debug=False):
+    """Content-Length via HEAD (open CDN), else 0 (unchecked download)."""
+    try:
+      r = session.head(url, headers=_api_headers(referer), timeout=TIMEOUT)
+    except requests.RequestException:
+      return 0
+    if r.status_code != 200:
+      return 0
+    try:
+      return int((r.headers or {}).get("Content-Length", 0))
+    except (ValueError, TypeError):
+      return 0
+
   def resolve_embed(self, session, watch_url, debug=False):
-    """Return the embedJS URL (stable per video key) for --login-only."""
+    """Return the embedJS URL (stable per video key) for --login-only.
+
+    Shorts carry no oembed key (no embedJS) — the watch URL itself is
+    the canonical reference.
+    """
+    if _is_shorts(watch_url):
+      return watch_url
     key, _data = self._bootstrap(session, watch_url, debug)
     return EMBEDJS_URL.format(key=key)
 
@@ -225,9 +398,13 @@ class RumbleAuth(AuthProvider):
 
     Tar variant: video segments are absolute .ts URLs (chunklists fetched
     eagerly); progressive-mp4 variant: one direct .mp4 URL per rung
-    (``progressive: True``) with empty audio segments. Sizes are exact
-    meta bytes; tar audio is the single shared .aac direct file.
+    (``progressive: True``) with empty audio segments. Shorts pages
+    (``/shorts/<id>``) carry no oembed key — their feed JSON holds the
+    main video's mp4 rungs (+ HEAD sizes) directly. Sizes are exact
+    meta/HEAD bytes; tar audio is the single shared .aac direct file.
     """
+    if _is_shorts(watch_url):
+      return self._resolve_shorts(session, watch_url, debug)
     from ..core.fetcher import fetch_hls_chunklist
     _key, data = self._bootstrap(session, watch_url, debug)
     if data.get("live"):

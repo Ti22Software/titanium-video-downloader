@@ -242,4 +242,5 @@ def resolve_config_url(session, input_url):
     fail("watch URL needs login first — this path should have been resolved "
          "to an embed URL before resolve_config_url.")
   fail("input must be a watch.studygateway.com URL, an embed.vhx.tv URL, "
-       "or a player.vimeo.com config URL.")
+       "a player.vimeo.com config URL, a vimeo.com video URL, or a "
+       "rumble.com watch (/v…), embed (/embed/), or shorts (/shorts/) URL.")

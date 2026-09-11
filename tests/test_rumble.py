@@ -81,8 +81,11 @@ def test_match():
   assert auth.match(WATCH_URL)
   assert auth.match("https://www.rumble.com/v79fews-x.html")
   assert auth.match("https://rumble.com/embed/v778qwk/")
+  assert auth.match("https://rumble.com/shorts/v7fb20s")
+  assert auth.match("https://rumble.com/shorts/v7fb20s/")
   assert not auth.match("https://vimeo.com/123")
   assert not auth.match("https://rumble.com/c/somechannel")
+  assert not auth.match("https://rumble.com/shorts/")
   assert RumbleAuth.requires_auth is False
   assert RumbleAuth.site_key == "rumble"
 
@@ -97,6 +100,10 @@ def test_resolve_embed_returns_embedjs_url():
   url = auth.resolve_embed(_session(), WATCH_URL)
   assert url.startswith("https://rumble.com/embedJS/u3/")
   assert "v=v778qwk" in url
+
+
+def test_resolve_embed_shorts_returns_watch_url():
+  assert RumbleAuth().resolve_embed(_session(), SHORTS_URL) == SHORTS_URL
 
 
 def test_resolve_playlist_builds_muxed_renditions():
@@ -252,3 +259,86 @@ def test_resolve_playlist_empty_shape_reports_keys(capsys):
     RumbleAuth().resolve_playlist(_mp4_session(empty), WATCH_URL)
   err = capsys.readouterr().err
   assert "tar_keys=[]" in err and "mp4_keys=[]" in err and "ua_keys=" in err
+
+
+SHORTS_URL = "https://rumble.com/shorts/v7fb20s"
+
+SHORTS_HTML = ('<html><head><meta property=og:title content="Party"></head>'
+               '<body><script type="application/json">{"items": ['
+               '{"relative_url": "/shorts/v7fb20s", "permalink_id": "v7fb20s",'
+               ' "title": "Main Short", "duration": 44, "live": false,'
+               ' "video_width": 960, "video_height": 960,'
+               ' "videos": ['
+               '{"url": "https://cdn/m.gaa.mp4", "type": "mp4", "res": 720,'
+               ' "bitrate_kbps": 2063},'
+               '{"url": "https://cdn/m.baa.mp4", "type": "mp4", "res": 360,'
+               ' "bitrate_kbps": 500}]},'
+               '{"relative_url": "/shorts/v7f3392", "permalink_id": "v7f3392",'
+               ' "title": "Related", "duration": 30, "live": false,'
+               ' "video_width": 640, "video_height": 640,'
+               ' "videos": ['
+               '{"url": "https://cdn/r.haa.mp4", "type": "mp4", "res": 1080,'
+               ' "bitrate_kbps": 4000}]}'
+               ']}</script></body></html>')
+
+
+class _HeadResp:
+  def __init__(self, status=200, length=0):
+    self.status_code = status
+    self.headers = {"Content-Length": str(length)}
+
+
+def _shorts_session(lengths=None):
+  lengths = lengths or {}
+
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      return _Resp(200, text=SHORTS_HTML)
+
+    def head(self, url, headers=None, timeout=None):
+      return _HeadResp(200, lengths.get(url, 0))
+  return _Stub()
+
+
+def test_resolve_shorts_scopes_to_main_and_sizes_via_head():
+  auth = RumbleAuth()
+  videos, audios, qmap, title = auth.resolve_playlist(
+    _shorts_session({"https://cdn/m.gaa.mp4": 1000,
+                     "https://cdn/m.baa.mp4": 500}), SHORTS_URL)
+  assert title == "Main Short"
+  # main rungs only (related 1080p excluded), all rungs, progressive
+  assert [v["id"] for v in videos] == ["rumble-720p", "rumble-360p"]
+  assert all(v["progressive"] and v["muxed"] for v in videos)
+  assert all(len(v["segments"]) == 1 for v in videos)
+  assert videos[0]["size_total"] == 1000
+  assert videos[0]["height"] == 720
+  assert videos[0]["bitrate"] == 2063000
+  assert qmap == {"rumble-720p": "720p", "rumble-360p": "360p"}
+  assert audios[0]["segments"] == []
+
+
+def test_resolve_shorts_source_fallback_single_rung():
+  html = ('<html><body><video>'
+          '<source type="video/mp4" src="https://cdn/s.gaa.mp4"/>'
+          '</video></body></html>')
+
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      return _Resp(200, text=html)
+
+    def head(self, url, headers=None, timeout=None):
+      return _HeadResp(200, 42)
+
+  videos, _audios, qmap, _title = RumbleAuth().resolve_playlist(_Stub(), SHORTS_URL)
+  assert [v["id"] for v in videos] == ["rumble-720p"]
+  assert videos[0]["size_total"] == 42
+  assert qmap == {"rumble-720p": "720p"}
+
+
+def test_resolve_shorts_no_media_reports_page(capsys):
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      return _Resp(200, text="<html><body>gone</body></html>")
+  with pytest.raises(SystemExit):
+    RumbleAuth().resolve_playlist(_Stub(), SHORTS_URL)
+  assert "page='v7fb20s'" in capsys.readouterr().err
