@@ -92,7 +92,7 @@ def _ffmpeg_error(what, err_text):
           or ("input/output error" in low and "muxing" in low)):
     print(err[-3000:], file=sys.stderr)
     fail(f"ffmpeg {what} hit a disk I/O error (often a full disk — "
-         "check free space with df, then re-run to resume).")
+         "check free space, then re-run to resume).")
   print(err[-3000:], file=sys.stderr)
   fail(f"ffmpeg {what} failed.")
 
