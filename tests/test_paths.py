@@ -7,7 +7,11 @@ import sys
 import pytest
 
 from titanium_video_downloader.core import paths
-from titanium_video_downloader.core.paths import _bundled_ffmpeg, ffmpeg_path
+from titanium_video_downloader.core.paths import (
+  _bundled_ffmpeg,
+  config_relative_path,
+  ffmpeg_path,
+)
 
 
 def _exe(tmp_path, name="ff"):
@@ -251,3 +255,38 @@ def test_remux_detaches_stdin(tmp_path, monkeypatch):
   monkeypatch.setattr(mux_mod, "ffmpeg_path", lambda explicit=None: "/bundled/ffmpeg")
   mux_mod.remux_concat(parts, tmp_path / "out.mp4")
   assert seen.get("stdin") == subprocess.DEVNULL
+
+
+def test_config_relative_absolute_passthrough(tmp_path):
+  target = tmp_path / "c.txt"
+  assert config_relative_path(str(target)) == target
+  assert config_relative_path(None) is None
+
+
+def test_config_relative_tilde_expands(monkeypatch, tmp_path):
+  monkeypatch.setenv("HOME", str(tmp_path))
+  assert config_relative_path("~/c.txt") == tmp_path / "c.txt"
+
+
+def test_config_relative_cwd_wins(monkeypatch, tmp_path):
+  work = tmp_path / "work"
+  work.mkdir()
+  (work / "c.txt").write_bytes(b"x")
+  cfg = tmp_path / "cfg"
+  cfg.mkdir()
+  (cfg / "c.txt").write_bytes(b"y")
+  monkeypatch.chdir(work)
+  monkeypatch.setenv("TI22_VIDEO_DL_CONFIG_DIR", str(cfg))
+  assert config_relative_path("c.txt") == work / "c.txt"
+
+
+def test_config_relative_falls_back_to_config_dir(monkeypatch, tmp_path, capsys):
+  work = tmp_path / "work"
+  work.mkdir()
+  cfg = tmp_path / "cfg"
+  cfg.mkdir()
+  monkeypatch.chdir(work)
+  monkeypatch.setenv("TI22_VIDEO_DL_CONFIG_DIR", str(cfg))
+  out = config_relative_path("c.txt")
+  assert out == cfg / "c.txt"
+  assert "config dir" in capsys.readouterr().err

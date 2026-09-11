@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 from ..extractors.base import fail
+from .envfile import default_config_dir
 
 
 def user_path(raw):
@@ -21,6 +22,26 @@ def user_path(raw):
   if raw is None:
     return None
   return Path(os.path.expandvars(os.path.expanduser(raw)))
+
+
+def config_relative_path(raw):
+  """Resolve a user-supplied file path with config-dir fallback.
+
+  Absolute paths (after ~/ $VAR expansion) pass through untouched.
+  Relative names try CWD first, then the app config dir — mirroring
+  find_dotenv's ./ → config-dir order. A miss in both places resolves
+  to the config-dir join so load failures name a concrete tried path.
+  """
+  import sys
+  p = user_path(raw)
+  if p is None or p.is_absolute():
+    return p
+  if (Path.cwd() / p).is_file():
+    return Path.cwd() / p
+  target = default_config_dir() / p
+  print(f"note: resolving relative path against config dir: {target}",
+        file=sys.stderr)
+  return target
 
 
 def _bundled_ffmpeg():

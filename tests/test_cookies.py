@@ -170,3 +170,21 @@ def test_prefer_off_ignores_env(monkeypatch, tmp_path, capsys):
   assert out["action"] == "loginonly"
   assert site_cookie_count(s, ("rumble.com",)) == 0
   assert "using TI22_VIDEO_DL_RUMBLE_COOKIES" not in capsys.readouterr().err
+
+
+def test_env_relative_name_resolves_via_config_dir(monkeypatch, tmp_path, capsys):
+  work = tmp_path / "work"
+  work.mkdir()
+  cfg = tmp_path / "cfg"
+  cfg.mkdir()
+  (cfg / "r.txt").write_text(NETSCAPE)
+  monkeypatch.chdir(work)
+  monkeypatch.setenv("TI22_VIDEO_DL_CONFIG_DIR", str(cfg))
+  monkeypatch.setenv("TI22_VIDEO_DL_RUMBLE_COOKIES", "r.txt")
+  s = new_session()
+  out = _resolve(monkeypatch, _args(prefer_cookies=True, login_only=True), s)
+  assert out["action"] == "loginonly"
+  assert site_cookie_count(s, ("rumble.com",)) == 1
+  err = capsys.readouterr().err
+  assert "config dir" in err
+  assert "using TI22_VIDEO_DL_RUMBLE_COOKIES session" in err

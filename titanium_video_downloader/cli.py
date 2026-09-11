@@ -17,7 +17,7 @@ from .core.appconfig import (
 from .core.batch import EntrySkip, dedupe_entries, is_url, parse_batch_file
 from .core.browser import close_browser
 from .core.disk import HEADROOM_BYTES, check_space, download_estimate
-from .core.paths import user_path
+from .core.paths import config_relative_path, user_path
 from .core.envfile import load_dotenv
 from .core.fetcher import download_direct, download_rendition, fetch_json
 from .core.models import (
@@ -264,7 +264,7 @@ def main(argv=None):
 
   if args.cookies:
     try:
-      load_cookies(session, user_path(args.cookies))
+      load_cookies(session, config_relative_path(args.cookies))
     except AuthError as e:
       fail(str(e))
 
@@ -373,7 +373,7 @@ def _resolve_entry(session, args, url, quality, tag, batch, authed,
         args._cookies_loaded = loaded
       if cpath not in loaded:
         try:
-          load_cookies(session, user_path(cpath),
+          load_cookies(session, config_relative_path(cpath),
                        label=_cookies_label(csource, prov.site_key))
         except AuthError as e:
           fail(str(e))

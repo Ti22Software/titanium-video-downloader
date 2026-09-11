@@ -77,7 +77,7 @@ titanium-video-downloader/
 │       ├── rumble.py          watch→key→embedJS, muxed-HLS + progressive-mp4 renditions, gated-origin bootstrap
 │       ├── rightnowmedia.py   stub — match real, rest waits for probe
 │       └── generic.py         fallback slot for the unknown site
-├── tests/                     166 offline tests (no network): parsers, auth, login stubs,
+├── tests/                     171 offline tests (no network): parsers, auth, login stubs,
 │                              no-auth matrix, env/.env/config.toml, quality, remux, ffmpeg resolve,
 │                              batch ledger, rumble variants, direct download,
 │                              per-site cookies truth-check
@@ -126,7 +126,7 @@ Downloads Chromium into the shared per-user cache (reused across projects). Only
 .venv/bin/python -m pytest tests/ -q
 ```
 
-This runs the 166 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
+This runs the 171 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
 
 ---
 
@@ -214,7 +214,7 @@ Unknown keys, wrong types, and malformed TOML never fail a run — a `note:` nam
 | Situation | What to do |
 | --- | --- |
 | Bot check blocks password login | `--cookies sg.txt` (exclusive Netscape export; only sites with entries in it use cookies, others auth normally) |
-| Per-site cookie files (debug/dev) | `TI22_VIDEO_DL_<SITE>_COOKIES=~/cookies/sg.txt` + `--prefer-cookies` (or config `prefer_cookies`); sites without a file auth normally; stale files warn at load, failures name re-export |
+| Per-site cookie files (debug/dev) | `TI22_VIDEO_DL_<SITE>_COOKIES=~/cookies/sg.txt` + `--prefer-cookies` (or config `prefer_cookies`); relative names resolve CWD first, then the config dir; sites without a file auth normally; stale files warn at load, failures name re-export |
 | 2FA / CAPTCHA / headed debugging | `--headed` (visible browser wherever one runs) |
 | Just verifying auth + resolve | `--login-only` (prints the resolved URL, exits) |
 | Site needs no login | Nothing — or `--no-auth` to assert it (auth-required sites fail fast naming themselves; `--no-auth` + `--prefer-cookies`/`--cookies` together is an error) |
@@ -227,7 +227,7 @@ Unknown keys, wrong types, and malformed TOML never fail a run — a `note:` nam
 - Python `==3.12.*`, stdlib + [`requests`](https://requests.readthedocs.io/) (+ optional [`tqdm`](https://tqdm.tqdm.pro/))
 - [`playwright`](https://playwright.dev/python/) 1.62 (`browser` extra) — URL harvesting only, never downloading
 - [`imageio-ffmpeg`](https://github.com/imageio/imageio-ffmpeg) 0.6.0 → ffmpeg 7.0.2-static (`ffmpeg` extra), system ffmpeg fallback
-- [`pytest`](https://pytest.org/) 9 (`test` extra) — 166 offline tests
+- [`pytest`](https://pytest.org/) 9 (`test` extra) — 171 offline tests
 - `uv` for environments, `git` for everything else
 
 ---
