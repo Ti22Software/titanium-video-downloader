@@ -67,6 +67,35 @@ def test_http_error_fails():
     fetch_hls_chunklist(_Bad(), TAR_URL, "https://rumble.com/vx")
 
 
+def test_part_write_enospc_fails_clean(tmp_path, monkeypatch, capsys):
+  import errno
+  from pathlib import Path
+  from titanium_video_downloader.core.fetcher import download_rendition
+
+  class _RespSeg:
+    status_code = 200
+
+    def __init__(self, data):
+      self.content = data
+
+    def raise_for_status(self):
+      pass
+
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      return _RespSeg(b"segdata")
+
+  def _boom(self, data):
+    raise OSError(errno.ENOSPC, "No space left on device")
+
+  monkeypatch.setattr(Path, "write_bytes", _boom)
+  rendition = {"init_segment": None, "segments": [{}, {}]}
+  with pytest.raises(SystemExit):
+    download_rendition("video", rendition, ["https://cdn/0.ts", "https://cdn/1.ts"],
+                       tmp_path, _Stub(), 1, suffix=".ts", assemble=False)
+  assert "disk full during video segment" in capsys.readouterr().err
+
+
 def test_download_no_assemble_returns_parts_dir(tmp_path):
   from titanium_video_downloader.core.fetcher import download_rendition
 

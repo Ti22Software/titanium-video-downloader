@@ -87,9 +87,20 @@ exist), skipped by `--no-space-check`, list modes return earlier:
   `estimate + 256MiB` (mux output). Same FS → ~2x + headroom total.
 - Known-short fails naming need-vs-have plus remedies (`--no-space-check`,
   smaller `--quality`); unreadable (NAS/cloud drives) warns and proceeds.
+- Mid-download write failures (ENOSPC with `--no-space-check`, permissions)
+  fail cleanly via `io_fail()` naming the operation — single stderr line for
+  future GUI bubbling; partial state stays resume-compatible.
 - `--output-dir DIR` roots auto-named outputs (`-o` still wins outright);
   `--temp-dir DIR` roots `<stem>.ti22` workdirs (fast local disk, RAM
   drive, or NAS staging — created with `mkdir -p`).
+- All user paths pass through `user_path()` (`~`/`$VAR` expansion — no-op
+  when the shell already expanded, lifesaver otherwise).
+- `-o` × `--output-dir` harmony: bare filename joins under the dir
+  (batch-friendly for future regex naming); dir-ful `-o` wins outright
+  with an ignored-flag note, never silently. Resolved absolute output +
+  temp paths print as notes on every run.
+- `.env` loads after argparse, so `--help` never absorbs real env files
+  (keeps the test suite hermetic against developer machines).
 - Batch (later): per-video re-check substituting measured finals for
   estimates (self-correcting plan) + bounded-buffer download/mux pipeline
   (default buffer 1) so the working set stays ~2-3 videos, not the corpus.

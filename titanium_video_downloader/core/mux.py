@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from ..extractors.base import fail
+from .disk import io_fail
 from .paths import ffmpeg_path
 
 
@@ -90,11 +91,14 @@ def remux_concat(parts_dir, out_path, ffmpeg=None):
   out_path = Path(out_path)
   print(f"\nRemuxing {len(segs)} TS segments -> {out_path.resolve()}", file=sys.stderr)
   lst = parts_dir / "concat.txt"
-  with open(lst, "w") as f:
-    for s in segs:
-      # Absolute entries: the concat demuxer resolves relative ones
-      # against the list file's own directory, doubling relative paths.
-      f.write(f"file '{s.resolve().as_posix()}'\n")
+  try:
+    with open(lst, "w") as f:
+      for s in segs:
+        # Absolute entries: the concat demuxer resolves relative ones
+        # against the list file's own directory, doubling relative paths.
+        f.write(f"file '{s.resolve().as_posix()}'\n")
+  except OSError as e:
+    io_fail("remux list write", e)
   candidates = [ff]
   sys_ff = shutil.which("ffmpeg")
   if sys_ff and sys_ff != ff:

@@ -1,4 +1,6 @@
-"""Offline tests: disk preflight (faked filesystems, no I/O)."""
+"""Offline tests: disk preflight + clean write failures (no real I/O)."""
+
+import errno
 
 import pytest
 
@@ -8,6 +10,7 @@ from titanium_video_downloader.core.disk import (
   download_estimate,
   free_bytes,
   human_bytes,
+  io_fail,
 )
 
 
@@ -55,3 +58,27 @@ def test_check_space_unreadable_warns_and_passes(tmp_path, monkeypatch, capsys):
                       lambda _: (_ for _ in ()).throw(OSError("cloud")))
   check_space(tmp_path, 10**12, "output")
   assert "without a space check" in capsys.readouterr().err
+
+
+def test_io_fail_disk_full_names_operation(capsys):
+  with pytest.raises(SystemExit):
+    io_fail("video segment 3 write", OSError(errno.ENOSPC, "No space left"))
+  err = capsys.readouterr().err
+  assert "disk full during video segment 3 write" in err
+  assert "re-run to resume" in err
+
+
+def test_io_fail_permission_names_operation(capsys):
+  with pytest.raises(SystemExit):
+    io_fail("video.mp4 assembly", OSError(errno.EACCES, "Permission denied", "/x/y"))
+  err = capsys.readouterr().err
+  assert "cannot write during video.mp4 assembly" in err
+  assert "permissions" in err
+
+
+def test_io_fail_generic_single_line(capsys):
+  with pytest.raises(SystemExit):
+    io_fail("manifest write", OSError(errno.EIO, "I/O error"))
+  lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("error:")]
+  assert len(lines) == 1
+  assert "manifest write" in lines[0]

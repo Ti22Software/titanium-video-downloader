@@ -12,6 +12,7 @@ from pathlib import Path
 import requests
 
 from .core.disk import HEADROOM_BYTES, check_space, download_estimate
+from .core.paths import user_path
 from .core.envfile import load_dotenv
 from .core.fetcher import download_rendition, fetch_json
 from .core.models import (
@@ -77,7 +78,6 @@ def _auth_mode(args, prov):
 
 
 def main(argv=None):
-  load_dotenv()  # ./.env, then <config-dir>/.env; real env always wins
   ap = argparse.ArgumentParser(
     description="Download a single studygateway video to an MP4 file.")
   ap.add_argument("input_url", help="watch.studygateway.com video URL, embed.vhx.tv iframe URL, or player.vimeo.com config URL")
@@ -112,7 +112,8 @@ def main(argv=None):
   ap.add_argument("--no-auth", action="store_true",
                   help="skip login entirely (only sites with requires_auth=False, e.g. public vimeo)")
   ap.add_argument("--output-dir", default=None,
-                  help="directory for auto-named outputs (explicit -o wins; default: cwd)")
+                  help="directory for auto-named outputs and bare -o filenames "
+                       "(dir-ful -o wins outright; default: cwd)")
   ap.add_argument("--temp-dir", default=None,
                   help="directory for intermediate .ti22 workdirs (fast local disk or RAM drive; default: beside output)")
   ap.add_argument("--no-space-check", action="store_true",
@@ -124,13 +125,17 @@ def main(argv=None):
                     or args.list_qualities_json):
     fail("--pick is mutually exclusive with "
          "--quality/--list-qualities/--list-qualities-json.")
+  # After parse_args so --help exits without touching the environment.
+  load_dotenv()  # ./.env, then <config-dir>/.env; real env always wins
   output_arg = args.output or args.output_pos
+  output_dir = user_path(args.output_dir)
+  temp_dir = user_path(args.temp_dir)
 
   session = new_session()
 
   if args.cookies:
     try:
-      load_cookies(session, args.cookies)
+      load_cookies(session, user_path(args.cookies))
     except AuthError as e:
       fail(str(e))
 
@@ -252,13 +257,23 @@ def main(argv=None):
   name = sanitize(title or config.get("video", {}).get("title") or "video")
   q = qmap.get(video["id"], label_for(video))
   if output_arg:
-    out_path = sanitize_path(output_arg)
+    # Harmonious -o x --output-dir: a bare filename joins under the dir
+    # (batch-friendly: regex can name files later); a dir-ful -o wins
+    # outright and the dir flag is reported ignored, never silently.
+    given = user_path(output_arg)
+    if given.parent == Path(".") and output_dir is not None:
+      out_path = sanitize_path(output_dir / given.name)
+    else:
+      out_path = sanitize_path(given)
+      if output_dir is not None:
+        print(f"note: --output-dir ignored (dir-ful -o wins): {output_dir}",
+              file=sys.stderr)
     if Path(output_arg).name != out_path.name:
       print(f"note: sanitized output name to '{out_path.name}'", file=sys.stderr)
   else:
-    if args.output_dir:
-      Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-      out_path = Path(args.output_dir) / f"{name} [{q}].mp4"
+    if output_dir is not None:
+      output_dir.mkdir(parents=True, exist_ok=True)
+      out_path = output_dir / f"{name} [{q}].mp4"
     else:
       out_path = Path(f"{name} [{q}].mp4")
   if out_path.suffix.lower() != ".mp4":
@@ -268,12 +283,14 @@ def main(argv=None):
   if out_path.exists():
     fail(f"output exists: {out_path} (remove it or pass a different output path).")
 
-  if args.temp_dir:
-    work_root = Path(args.temp_dir)
+  if temp_dir is not None:
+    work_root = temp_dir
   else:
     work_root = out_path.parent
   workdir = work_root / (out_path.stem + ".ti22")
   workdir.mkdir(parents=True, exist_ok=True)
+  print(f"note: output: {out_path.resolve()}", file=sys.stderr)
+  print(f"note: temp: {workdir.resolve()}", file=sys.stderr)
   if not args.no_space_check:
     est = download_estimate(video, audio)
     check_space(workdir, est + HEADROOM_BYTES, "temporary files")

@@ -2,15 +2,17 @@
 
 Space model (documented, tunable): segments land in the workdir
 (~1x estimate), the mux output lands beside the final file (~1x),
-plus HEADROOM each. Same filesystem → ~2x + 2x headroom total;
+plus HEADROOM each. Same filesystem → ~2x + headroom total;
 split across filesystems (see --temp-dir) → each side checked alone.
 Unknown free space (NAS/cloud drives that can't be stat'ed) warns and
 proceeds — fail-open on unknown, fail-closed on known-short.
 """
 
+import errno
 import shutil
 
 from .models import audio_bytes, video_bytes
+from ..extractors.base import fail
 
 HEADROOM_BYTES = 256 * 1024 * 1024
 
@@ -54,3 +56,20 @@ def check_space(path, needed, label):
     fail(f"insufficient disk space for {label} '{path}': need "
          f"~{human_bytes(needed)}, have {human_bytes(free)} free "
          "(use --no-space-check to override, or a smaller --quality).")
+
+
+def io_fail(operation, exc):
+  """Clean failure for local write errors (GUI-bubblable: single stderr
+  line via fail(), exit 1 — the future error event). Partial state on
+  disk stays resume-compatible: manifests list only fully-written
+  segments, so re-running resumes instead of restarting."""
+  err = exc.errno if isinstance(exc, OSError) else None
+  where = f" ({exc.filename})" if isinstance(exc, OSError) and exc.filename else ""
+  if err == errno.ENOSPC:
+    fail(f"disk full during {operation}{where} — free space or point "
+         "--temp-dir/--output-dir elsewhere and re-run to resume.")
+  if err in (errno.EACCES, errno.EPERM, errno.EROFS):
+    fail(f"cannot write during {operation}{where}: {exc.strerror or exc} — "
+         "check directory permissions.")
+  detail = exc.strerror or exc
+  fail(f"write failed during {operation}{where}: {detail}.")

@@ -1,4 +1,4 @@
-"""Runtime binary resolution (frozen-aware later; dev/CWD today).
+"""Runtime path resolution (frozen-aware later; dev/CWD today).
 
 Future residents: install_dir(), config_dir(), browsers_dir().
 """
@@ -8,6 +8,19 @@ import shutil
 from pathlib import Path
 
 from ..extractors.base import fail
+
+
+def user_path(raw):
+  """User-supplied path with shell conventions applied.
+
+  expanduser() (~) + expandvars() ($VAR) + Path, in one choke point for
+  every path flag. No-op when the shell already expanded; lifesaver for
+  dash, quoted strings, and GUI front-ends passing literals. None stays
+  None (optional flags).
+  """
+  if raw is None:
+    return None
+  return Path(os.path.expandvars(os.path.expanduser(raw)))
 
 
 def _bundled_ffmpeg():

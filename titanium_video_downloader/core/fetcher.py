@@ -18,6 +18,7 @@ except ImportError:
 
 from .session import EMBED_DOC_HEADERS, EMBED_ORIGIN_HEADERS, RETRIES, TIMEOUT, UA
 from ..extractors.base import fail
+from .disk import io_fail
 
 
 def fetch_json(session, url, what):
@@ -177,12 +178,18 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
           except RuntimeError as e:
             errors.append(str(e))
           else:
-            (parts / f"{idx:05d}{suffix}").write_bytes(data)
+            try:
+              (parts / f"{idx:05d}{suffix}").write_bytes(data)
+            except OSError as e:
+              io_fail(f"{kind} segment {idx} write", e)
             _mark(idx)
       finally:
         if bar:
           bar.close()
-      manifest.write_text(json.dumps(sorted(done)))
+      try:
+        manifest.write_text(json.dumps(sorted(done)))
+      except OSError as e:
+        io_fail(f"{kind} manifest write", e)
   if errors:
     fail(f"{kind} download had {len(errors)} failed segment(s), e.g.: {errors[0]}")
   if len(done) != total:
@@ -196,10 +203,13 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
   out = workdir / f"{kind}.mp4"
   if not assemble:
     return parts
-  with open(out, "wb") as f:
-    if rendition.get("init_segment"):
-      f.write(base64.b64decode(rendition["init_segment"]))
-    for i in range(len(seg_urls)):
-      with open(parts / f"{i:05d}{suffix}", "rb") as sf:
-        shutil.copyfileobj(sf, f)
+  try:
+    with open(out, "wb") as f:
+      if rendition.get("init_segment"):
+        f.write(base64.b64decode(rendition["init_segment"]))
+      for i in range(len(seg_urls)):
+        with open(parts / f"{i:05d}{suffix}", "rb") as sf:
+          shutil.copyfileobj(sf, f)
+  except OSError as e:
+    io_fail(f"{kind} assembly write", e)
   return out
