@@ -213,3 +213,57 @@ def test_download_assembles_by_default(tmp_path):
                            tmp_path, _Stub(), 2, suffix=".ts")
   assert out == tmp_path / "video.mp4"
   assert out.read_bytes() == b"segdatasegdata"
+
+
+def _run_rendition(tmp_path, segs=3):
+  from titanium_video_downloader.core.fetcher import download_rendition
+
+  class _RespSeg:
+    status_code = 200
+
+    def __init__(self, data):
+      self.content = data
+
+    def raise_for_status(self):
+      pass
+
+  class _Stub:
+    def get(self, url, headers=None, timeout=None):
+      return _RespSeg(b"segdata")
+
+  rendition = {"init_segment": None,
+               "segments": [{} for _ in range(segs)]}
+  return download_rendition("video", rendition,
+                            [f"https://cdn/{i}.ts" for i in range(segs)],
+                            tmp_path, _Stub(), 2, suffix=".ts")
+
+
+def test_assembly_skipped_when_fresh(tmp_path, capsys):
+  out = _run_rendition(tmp_path)
+  assert out.read_bytes() == b"segdata" * 3
+  capsys.readouterr()  # drain first-run output
+  out2 = _run_rendition(tmp_path)
+  assert out2 == out
+  assert out2.read_bytes() == b"segdata" * 3
+  assert "skipping assembly" in capsys.readouterr().err
+
+
+def test_assembly_rebuilds_torn_file(tmp_path, capsys):
+  out = _run_rendition(tmp_path)
+  out.write_bytes(b"short")
+  capsys.readouterr()
+  out2 = _run_rendition(tmp_path)
+  assert out2.read_bytes() == b"segdata" * 3
+  assert "skipping assembly" not in capsys.readouterr().err
+
+
+def test_assembly_rebuilds_stale_mtime(tmp_path, capsys):
+  import os
+  import time
+  out = _run_rendition(tmp_path)
+  old = time.time() - 1000
+  os.utime(out, (old, old))
+  capsys.readouterr()
+  out2 = _run_rendition(tmp_path)
+  assert out2.read_bytes() == b"segdata" * 3
+  assert "skipping assembly" not in capsys.readouterr().err

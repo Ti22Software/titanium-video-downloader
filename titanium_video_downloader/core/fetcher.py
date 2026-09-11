@@ -3,6 +3,7 @@
 import base64
 import concurrent.futures
 import json
+import os
 import shutil
 import sys
 import threading
@@ -217,6 +218,9 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
   out = workdir / f"{kind}.mp4"
   if not assemble:
     return parts
+  if _assembly_fresh(out, parts, suffix, len(seg_urls), rendition.get("init_segment")):
+    print(f"{kind}: combined file fresh, skipping assembly", file=sys.stderr)
+    return out
   try:
     with open(out, "wb") as f:
       if rendition.get("init_segment"):
@@ -227,3 +231,27 @@ def download_rendition(kind, rendition, seg_urls, workdir, session, concurrency,
   except OSError as e:
     io_fail(f"{kind} assembly write", e)
   return out
+
+
+def _assembly_fresh(out, parts, suffix, count, init_segment):
+  """True when the combined file already matches current parts.
+
+  All three must hold: exists, mtime newer than the newest part, and byte
+  size equal to init + parts sum (stat-only, milliseconds). A kill
+  mid-assembly leaves a short size or stale mtime and re-assembles.
+  """
+  try:
+    out_stat = out.stat()
+  except OSError:
+    return False
+  try:
+    newest = 0.0
+    total = len(base64.b64decode(init_segment)) if init_segment else 0
+    for i in range(count):
+      st = (parts / f"{i:05d}{suffix}").stat()
+      if st.st_mtime > newest:
+        newest = st.st_mtime
+      total += st.st_size
+  except OSError:
+    return False
+  return out_stat.st_mtime >= newest and out_stat.st_size == total
