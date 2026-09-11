@@ -11,6 +11,15 @@ from titanium_video_downloader.extractors.base import AuthError
 from titanium_video_downloader.extractors.vimeo import _clip_ref, CONFIG_URL, VimeoAuth
 
 
+@pytest.fixture(autouse=True)
+def _fresh_browser():
+  """Singleton state must not leak between tests using different fakes."""
+  from titanium_video_downloader.core import browser as browser_mod
+  browser_mod.close_browser()
+  yield
+  browser_mod.close_browser()
+
+
 def test_clip_ref_matrix():
   assert _clip_ref("https://vimeo.com/945678565") == ("945678565", None)
   assert _clip_ref("https://www.vimeo.com/945678565") == ("945678565", None)
@@ -210,6 +219,9 @@ def test_intercept_clicks_play_on_watch_page(monkeypatch):
       def new_context(self, **kw):
         return _Ctx2()
 
+      def is_connected(self):
+        return True
+
       def close(self):
         pass
 
@@ -222,11 +234,11 @@ def test_intercept_clicks_play_on_watch_page(monkeypatch):
       chromium = _Chromium()
 
     class _Sync:
-      def __enter__(self):
+      def start(self):
         return _Pw()
 
-      def __exit__(self, *exc):
-        return False
+      def stop(self):
+        pass
 
     mod.sync_playwright = lambda: _Sync()
     return mod
@@ -330,6 +342,9 @@ def _fake_playwright(config_url=None, status=200, fire_listener=True,
     def __init__(self, ctx):
       self._ctx = ctx
 
+    def is_connected(self):
+      return True
+
     def new_context(self, **kw):
       return self._ctx
 
@@ -347,12 +362,12 @@ def _fake_playwright(config_url=None, status=200, fire_listener=True,
   class _Pw:
     chromium = _Chromium()
 
-  class _Sync:
-    def __enter__(self):
-      return _Pw()
+    def stop(self):
+      pass
 
-    def __exit__(self, *exc):
-      return False
+  class _Sync:
+    def start(self):
+      return _Pw()
 
   mod.sync_playwright = lambda: _Sync()
   return mod

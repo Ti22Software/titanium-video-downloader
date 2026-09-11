@@ -57,66 +57,62 @@ class StudyGatewayAuth(AuthProvider):
     if not email or not password:
       raise AuthError("browser login needs --email/--password or "
                       "TI22_VIDEO_DL_STUDYGATEWAY_EMAIL/PASSWORD.")
-    with sync_playwright() as pw:
-      browser = pw.chromium.launch(headless=not headed)
-      ctx = browser.new_context(user_agent=UA)
-      page = ctx.new_page()
+    from ..core.browser import get_browser
+    browser = get_browser(headed)
+    ctx = browser.new_context(user_agent=UA)
+    page = ctx.new_page()
+    try:
       try:
+        page.goto(WATCH_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_url("**/login**", timeout=30000)
+      except PwTimeout:
+        raise AuthError("browser login timed out reaching the login page "
+                        "(site/Cloudflare slow?) — retry, or add --headed to watch.")
+      www_url = page.url
+      if debug:
+        print(f"debug-login: browser at {_debug_redact_url(www_url)} "
+              f"has_saml={'SAMLRequest=' in www_url}", file=sys.stderr)
+      try:
+        page.fill('input[type="email"], input[name="email"]', email, timeout=15000)
+        page.fill('input[type="password"], input[name="password"]', password, timeout=15000)
+        page.click('button[type="submit"], input[type="submit"]', timeout=15000)
+      except PwTimeout:
+        raise AuthError("browser login could not fill/submit the login form "
+                        "(page format changed?) — retry with --headed to watch.")
+      # Do NOT use expect_navigation: wrong creds / slow Cloudflare / JS
+      # SAML auto-post may never fire a navigation (previously a raw
+      # TimeoutError traceback). Poll for the browse URL instead.
+      # Hint stays generic on purpose — no chasing site copy changes.
+      try:
+        page.wait_for_url("**/browse**", timeout=90000)
+      except PwTimeout:
+        cur = page.url
+        if "/login" in cur:
+          raise AuthError("browser login timed out staying on the login page "
+                          "(check creds / 2FA / CAPTCHA; retry with --headed to watch).")
+        raise AuthError(f"browser login timed out at {_debug_redact_url(cur)} — "
+                        "site/Cloudflare slow? Retry, or add --headed to watch.")
+      html = page.content()
+      st = _auth_state(html)
+      _debug_auth_state("browser browse auth", html, debug)
+      if not st.get("authed"):
+        raise AuthError("browser login did not reach authenticated browse "
+                        "(check creds / 2FA / CAPTCHA in headed mode with --headed).")
+      for c in ctx.cookies():
         try:
-          page.goto(WATCH_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
-          page.wait_for_url("**/login**", timeout=30000)
-        except PwTimeout:
-          raise AuthError("browser login timed out reaching the login page "
-                          "(site/Cloudflare slow?) — retry, or add --headed to watch.")
-        www_url = page.url
-        if debug:
-          print(f"debug-login: browser at {_debug_redact_url(www_url)} "
-                f"has_saml={'SAMLRequest=' in www_url}", file=sys.stderr)
-        try:
-          page.fill('input[type="email"], input[name="email"]', email, timeout=15000)
-          page.fill('input[type="password"], input[name="password"]', password, timeout=15000)
-          page.click('button[type="submit"], input[type="submit"]', timeout=15000)
-        except PwTimeout:
-          raise AuthError("browser login could not fill/submit the login form "
-                          "(page format changed?) — retry with --headed to watch.")
-        # Do NOT use expect_navigation: wrong creds / slow Cloudflare / JS
-        # SAML auto-post may never fire a navigation (previously a raw
-        # TimeoutError traceback). Poll for the browse URL instead.
-        # Hint stays generic on purpose — no chasing site copy changes.
-        try:
-          page.wait_for_url("**/browse**", timeout=90000)
-        except PwTimeout:
-          cur = page.url
-          if "/login" in cur:
-            raise AuthError("browser login timed out staying on the login page "
-                            "(check creds / 2FA / CAPTCHA; retry with --headed to watch).")
-          raise AuthError(f"browser login timed out at {_debug_redact_url(cur)} — "
-                          "site/Cloudflare slow? Retry, or add --headed to watch.")
-        html = page.content()
-        st = _auth_state(html)
-        _debug_auth_state("browser browse auth", html, debug)
-        if not st.get("authed"):
-          raise AuthError("browser login did not reach authenticated browse "
-                          "(check creds / 2FA / CAPTCHA in headed mode with --headed).")
-        for c in ctx.cookies():
-          try:
-            session.cookies.set(c["name"], c["value"],
-                                domain=c.get("domain", ""),
-                                path=c.get("path", "/"))
-          except Exception:
-            pass
-        if debug:
-          names = sorted({c.name for c in session.cookies})
-          print(f"debug-login: browser harvest cookies={names}", file=sys.stderr)
-      finally:
-        try:
-          ctx.close()
+          session.cookies.set(c["name"], c["value"],
+                              domain=c.get("domain", ""),
+                              path=c.get("path", "/"))
         except Exception:
           pass
-        try:
-          browser.close()
-        except Exception:
-          pass
+      if debug:
+        names = sorted({c.name for c in session.cookies})
+        print(f"debug-login: browser harvest cookies={names}", file=sys.stderr)
+    finally:
+      try:
+        ctx.close()
+      except Exception:
+        pass
     return session
 
   def resolve_embed(self, session, watch_url, debug=False):

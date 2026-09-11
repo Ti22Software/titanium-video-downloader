@@ -4,6 +4,7 @@ Event bus (GUI prerequisite) is explicitly deferred — see ARCHITECTURE.md.
 """
 
 import argparse
+import atexit
 import json
 import shutil
 import sys
@@ -11,6 +12,8 @@ from pathlib import Path
 
 import requests
 
+from .core.batch import EntrySkip, dedupe_entries, is_url, parse_batch_file
+from .core.browser import close_browser
 from .core.disk import HEADROOM_BYTES, check_space, download_estimate
 from .core.paths import user_path
 from .core.envfile import load_dotenv
@@ -81,10 +84,14 @@ def _auth_mode(args, prov):
 
 def main(argv=None):
   ap = argparse.ArgumentParser(
-    description="Download a single studygateway video to an MP4 file.")
-  ap.add_argument("input_url", help="watch.studygateway.com video URL, embed.vhx.tv iframe URL, or player.vimeo.com config URL")
-  ap.add_argument("output_pos", nargs="?", default=None,
-                  help="output MP4 path (shorthand for --output)")
+    description="Download studygateway/vimeo/rumble videos to MP4 files.")
+  ap.add_argument("inputs", nargs="*",
+                  help="video URL(s). With one URL, an optional second positional "
+                       "is the output path (legacy --output shorthand). With several "
+                       "URLs, all must be http(s) (a batch — use --output-dir).")
+  ap.add_argument("--batch-file", default=None,
+                  help="text file of 'URL [QUALITY]' lines (# comments Ok); "
+                       "combined with CLI URLs into one batch")
   ap.add_argument("--list-qualities", action="store_true",
                   help="list available renditions and exit")
   ap.add_argument("--list-qualities-json", action="store_true",
@@ -126,17 +133,38 @@ def main(argv=None):
   ap.add_argument("--no-space-check", action="store_true",
                   help="skip the pre-download disk-space gate (unreadable NAS/cloud drives)")
   args = ap.parse_args(argv)
-  if args.output and args.output_pos and args.output != args.output_pos:
+  atexit.register(close_browser)
+  urls = [p for p in args.inputs if is_url(p)]
+  outs = [p for p in args.inputs if not is_url(p)]
+  if len(outs) > 1:
+    fail("only one positional output path is allowed "
+         "(use --output-dir with batch inputs).")
+  file_entries = parse_batch_file(args.batch_file) if args.batch_file else []
+  if not urls and not file_entries:
+    ap.error("no input URL: pass video URL(s) or --batch-file.")
+  if outs and (file_entries or len(urls) > 1):
+    fail("positional output is single-download only with batch inputs; "
+         "use --output-dir.")
+  if args.output and outs and args.output != outs[0]:
     fail("pass the output path either positionally or via --output, not both.")
+  output_arg = args.output or (outs[0] if outs else None)
   if args.pick and (args.quality != "best" or args.list_qualities
                     or args.list_qualities_json):
     fail("--pick is mutually exclusive with "
          "--quality/--list-qualities/--list-qualities-json.")
   # After parse_args so --help exits without touching the environment.
   load_dotenv()  # ./.env, then <config-dir>/.env; real env always wins
-  output_arg = args.output or args.output_pos
-  output_dir = user_path(args.output_dir)
-  temp_dir = user_path(args.temp_dir)
+  entries = file_entries + [(u, None) for u in urls]
+  entries, dup_notes = dedupe_entries(entries)
+  for note in dup_notes:
+    print(note, file=sys.stderr)
+  batch = len(entries) > 1
+  if batch and (args.list_qualities or args.list_qualities_json):
+    fail("--list-qualities modes are single-download only; "
+         "drop them or pass one URL.")
+  if batch and (args.output or outs):
+    fail("--output/positional output is single-download only with batch "
+         "inputs; use --output-dir.")
 
   session = new_session()
 
@@ -146,11 +174,108 @@ def main(argv=None):
     except AuthError as e:
       fail(str(e))
 
-  input_url = args.input_url
-  prov = provider_for(input_url)
+  if batch:
+    return run_batch(args, entries, session)
+  url, quality = entries[0]
+  output_arg = args.output or (outs[0] if outs else None)
+  output_dir = user_path(args.output_dir)
+  temp_dir = user_path(args.temp_dir)
+  try:
+    bundle = _resolve_entry(session, args, url, quality, None, False, set(),
+                            output_arg, output_dir, temp_dir)
+  except EntrySkip:
+    return 0
+  if bundle["action"] != "download":
+    return 0
+  _download_entry(session, args, bundle, None, False)
+  return 0
+
+
+def run_batch(args, entries, session):
+  """Sequential batch: resolve all → gate → download loop. Returns failures."""
+  authed = set()
+  output_dir = user_path(args.output_dir)
+  temp_dir = user_path(args.temp_dir)
+  total = len(entries)
+  status = {}
+  bundles = {}
+  try:
+    for i, (url, quality) in enumerate(entries):
+      tag = f"[{i + 1}/{total}]"
+      print(f"{tag} {url}", file=sys.stderr)
+      try:
+        bundle = _resolve_entry(session, args, url, quality, tag, True, authed,
+                                None, output_dir, temp_dir)
+      except EntrySkip as e:
+        print(f"{tag} skipped: {e}", file=sys.stderr)
+        status[i] = "skipped"
+        continue
+      except SystemExit:
+        status[i] = "failed"
+        continue
+      except Exception as e:
+        print(f"error: unexpected failure resolving {url}: {e}", file=sys.stderr)
+        status[i] = "failed"
+        continue
+      if bundle["action"] != "download":
+        status[i] = "ok"
+        continue
+      bundles[i] = bundle
+    todo = [(i, bundles[i]) for i in sorted(bundles)]
+    if todo and not args.no_space_check:
+      for _, b in todo:
+        b["workdir"].mkdir(parents=True, exist_ok=True)
+        b["outdir"].mkdir(parents=True, exist_ok=True)
+      ests = [download_estimate(b["video"], b["audio"]) for _, b in todo]
+      if args.keep_intermediate:
+        work_need = sum(ests) + HEADROOM_BYTES
+      else:
+        work_need = max(ests) + HEADROOM_BYTES
+      out_need = sum(ests) + HEADROOM_BYTES
+      b0 = todo[0][1]
+      check_space(b0["workdir"], work_need, "batch temporary files")
+      check_space(b0["outdir"], out_need, "batch outputs")
+    for i, bundle in todo:
+      tag = f"[{i + 1}/{total}]"
+      try:
+        _download_entry(session, args, bundle, tag, True)
+      except SystemExit:
+        status[i] = "failed"
+        continue
+      except Exception as e:
+        print(f"error: unexpected failure downloading {bundle['url']}: {e}",
+              file=sys.stderr)
+        status[i] = "failed"
+        continue
+      status[i] = "ok"
+  finally:
+    close_browser()
+  ok = sum(1 for s in status.values() if s == "ok")
+  skipped = sum(1 for s in status.values() if s == "skipped")
+  failed = sum(1 for s in status.values() if s == "failed")
+  print(f"batch complete: {ok} ok, {skipped} skipped, {failed} failed",
+        file=sys.stderr)
+  for i, (url, _quality) in enumerate(entries):
+    if status.get(i) != "ok":
+      print(f"  {status.get(i)}: {url}", file=sys.stderr)
+  return failed
+def _resolve_entry(session, args, url, quality, tag, batch, authed,
+                   output_arg, output_dir, temp_dir):
+  """Resolve one video through selection. Returns a bundle dict.
+
+  Bundle action: "download" (video/audio/urls/paths/est ready) |
+  "loginonly" | "listed". Raises EntrySkip (exists/ask-skip);
+  fail() exits (single path and batch per-entry failure alike).
+  """
+  pre = f"{tag} " if tag else ""
+  input_url = url
+  prov = provider_for(url)
   if prov is not None:
     mode = _auth_mode(args, prov)
-    if mode == "none":
+    if prov.site_key in authed and mode in ("password", "browser"):
+      if args.debug_login:
+        print(f"debug-login: reusing {prov.site_key} session", file=sys.stderr)
+    elif mode == "none":
       if _env_creds_present(prov.site_key):
         print("note: ignoring configured credentials due to --no-auth", file=sys.stderr)
       print(f"note: --no-auth accepted for {prov.site_key}, skipping login", file=sys.stderr)
@@ -193,8 +318,9 @@ def main(argv=None):
         except AuthError as e:
           fail(f"{e}")
         print("login ok", file=sys.stderr)
+        authed.add(prov.site_key)
     try:
-      input_url = prov.resolve_embed(session, args.input_url, debug=args.debug_login)
+      input_url = prov.resolve_embed(session, url, debug=args.debug_login)
     except SystemExit:
       raise
     except Exception as e:
@@ -202,12 +328,12 @@ def main(argv=None):
     print(f"embed: {input_url}", file=sys.stderr)
     if args.login_only:
       print(input_url)
-      return 0
+      return {"action": "loginonly"}
 
   config_url, title, _vid = None, None, None
   if prov is not None and prov.site_key == "rumble":
     videos, audios, qmap, title = prov.resolve_playlist(
-      session, args.input_url, debug=args.debug_login)
+      session, url, debug=args.debug_login)
     playlist_url = ""
     config = {}
   else:
@@ -238,11 +364,11 @@ def main(argv=None):
     for item in quality_items(videos, audios, qmap):
       print(f"{item['quality']:<8}{item['size'] / 1e6:>9.1f}M  "
             f"{item['bitrate']:>9}  {item['id']}")
-    return 0
+    return {"action": "listed"}
 
   if args.list_qualities_json:
     print(json.dumps(quality_items(videos, audios, qmap), indent=2))
-    return 0
+    return {"action": "listed"}
 
   rows = quality_items(videos, audios, qmap)
 
@@ -260,32 +386,33 @@ def main(argv=None):
     picked = rows[pick_index(len(rows), sys.stdin.readline()) - 1]
     video = next(v for v in videos if v["id"] == picked["id"])
   else:
-    video, relation = find_video(videos, args.quality)
+    req_quality = quality if quality is not None else args.quality
+    video, relation = find_video(videos, req_quality)
     if relation == "exact":
       pass
     elif args.on_missing_quality == "fail" or video is None:
-      video = select_video(videos, args.quality)  # fails, established messages
+      video = select_video(videos, req_quality)  # fails, established messages
     elif args.on_missing_quality == "fallback":
-      print(f"note: quality '{args.quality}' not available — using "
+      print(f"note: quality '{req_quality}' not available — using "
             f"{label_for(video)} (nearest {relation}, "
             "--on-missing-quality=fallback)", file=sys.stderr)
-    else:  # ask (batch reuse: same helper shape feeds per-video prompts later)
+    else:  # ask (same helper shape feeds per-video prompts in batch)
       if not sys.stdin.isatty():
         fail("--on-missing-quality=ask needs an interactive terminal "
              "(choose fallback or fail for scripts).")
       _print_rows()
       fb_idx = next(i for i, item in enumerate(rows, 1) if item["id"] == video["id"])
-      sys.stderr.write(f"quality '{args.quality}' unavailable — pick "
+      sys.stderr.write(f"quality '{req_quality}' unavailable — pick "
                        f"[1-{len(rows)}], s to skip, Enter for "
                        f"{label_for(video)} fallback (--on-missing-quality=ask): ")
       sys.stderr.flush()
       choice = interpret_ask(sys.stdin.readline(), len(rows), fb_idx)
       if choice is None:
-        print(f"note: skipped '{args.quality}' (--on-missing-quality=ask)",
+        print(f"note: skipped '{req_quality}' (--on-missing-quality=ask)",
               file=sys.stderr)
-        return 0
+        raise EntrySkip(f"skipped '{req_quality}' by user choice")
       picked = rows[choice - 1]
-      print(f"note: quality '{args.quality}' not available — using "
+      print(f"note: quality '{req_quality}' not available — using "
             f"{picked['quality']} (picked, --on-missing-quality=ask)",
             file=sys.stderr)
       video = next(v for v in videos if v["id"] == picked["id"])
@@ -320,6 +447,9 @@ def main(argv=None):
     print(f"note: using output name '{out_path.name}'", file=sys.stderr)
   out_path.parent.mkdir(parents=True, exist_ok=True)
   if out_path.exists():
+    if batch:
+      print(f"note: output exists, skipping: {out_path}", file=sys.stderr)
+      raise EntrySkip(f"output exists: {out_path}")
     fail(f"output exists: {out_path} (remove it or pass a different output path).")
 
   if temp_dir is not None:
@@ -327,26 +457,42 @@ def main(argv=None):
   else:
     work_root = out_path.parent
   workdir = work_root / (out_path.stem + ".ti22")
+  est = download_estimate(video, audio)
+  return {"action": "download", "url": url, "video": video, "audio": audio,
+          "v_urls": v_urls, "a_urls": a_urls, "out_path": out_path,
+          "outdir": out_path.parent, "workdir": workdir, "est": est, "q": q}
+
+
+def _download_entry(session, args, bundle, tag, batch):
+  """Download + mux one resolved bundle. Returns "ok". fail() exits."""
+  pre = f"{tag} " if tag else ""
+  video = bundle["video"]
+  audio = bundle["audio"]
+  v_urls = bundle["v_urls"]
+  a_urls = bundle["a_urls"]
+  out_path = bundle["out_path"]
+  workdir = bundle["workdir"]
   workdir.mkdir(parents=True, exist_ok=True)
-  print(f"note: output: {out_path.resolve()}", file=sys.stderr)
-  print(f"note: temp: {workdir.resolve()}", file=sys.stderr)
+  print(f"note: {pre}output: {out_path.resolve()}", file=sys.stderr)
+  print(f"note: {pre}temp: {workdir.resolve()}", file=sys.stderr)
   if not args.no_space_check:
     est = download_estimate(video, audio)
     check_space(workdir, est + HEADROOM_BYTES, "temporary files")
     check_space(out_path.parent, est + HEADROOM_BYTES, "output")
   fps = f" {video['framerate']:.2f}fps" if video.get("framerate") else ""
+  q = bundle["q"]
   if video.get("muxed"):
     # Muxed single-stream (e.g. HLS-TS): audio rides inside the segments.
-    print(f"video: {q} {video['width']}x{video['height']}{fps} "
+    print(f"{pre}video: {q} {video['width']}x{video['height']}{fps} "
           f"({len(v_urls)} segs, muxed A/V)", file=sys.stderr)
     download_rendition("video", video, v_urls, workdir, session,
                        args.concurrency, suffix=".ts", assemble=False,
-                       headers=segment_headers(args.input_url))
+                       headers=segment_headers(bundle["url"]))
     remux_concat(workdir / "video", out_path, ffmpeg=args.ffmpeg_path)
   else:
     sr = audio.get("sample_rate")
     sr_label = f" {sr / 1000:.1f}kHz" if sr else ""
-    print(f"video: {q} {video['width']}x{video['height']}{fps} "
+    print(f"{pre}video: {q} {video['width']}x{video['height']}{fps} "
           f"({len(v_urls)} segs), "
           f"audio: {audio_label(audio.get('codecs'))}{sr_label} ({len(a_urls)} segs)",
           file=sys.stderr)
@@ -357,4 +503,4 @@ def main(argv=None):
   if not args.keep_intermediate:
     shutil.rmtree(workdir, ignore_errors=True)
   print(str(out_path))
-  return 0
+  return "ok"

@@ -110,71 +110,69 @@ class VimeoAuth(AuthProvider):
     join the session for the shared downstream pipeline.
     """
     try:
-      from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
+      from playwright.sync_api import TimeoutError as PwTimeout
     except ImportError:
-      raise AuthError("playwright not installed — run: pip install playwright "
-                      "&& playwright install chromium, or use --cookies.")
-    with sync_playwright() as pw:
-      browser = pw.chromium.launch(headless=not headed)
-      ctx = browser.new_context(viewport={"width": 1280, "height": 800},
-                                user_agent=UA)
-      page = ctx.new_page()
-      seen = []
+      # get_browser() raises the friendly AuthError first; this keeps the
+      # name bound for the except clauses below.
+      class PwTimeout(Exception):
+        pass
+    from ..core.browser import get_browser
+    browser = get_browser(headed)
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800},
+                              user_agent=UA)
+    page = ctx.new_page()
+    seen = []
 
-      def _on_request(req):
-        url = req.url
-        if "player.vimeo.com" in url and "/config" in url:
-          seen.append(url)
+    def _on_request(req):
+      url = req.url
+      if "player.vimeo.com" in url and "/config" in url:
+        seen.append(url)
 
-      page.on("request", _on_request)
+    page.on("request", _on_request)
+    try:
       try:
+        page.goto(watch_url, wait_until="domcontentloaded", timeout=45000)
+        play = page.get_by_role("button", name="Play").first
+        play.wait_for(state="visible", timeout=30000)
+        play.scroll_into_view_if_needed(timeout=10000)
+      except PwTimeout:
+        raise AuthError("vimeo Play button never appeared "
+                        "(page format changed?) — retry with --headed to watch.")
+      try:
+        with page.expect_response(
+            lambda resp: "player.vimeo.com" in resp.url and "/config" in resp.url,
+            timeout=45000) as resp_info:
+          play.click(timeout=15000)
+        resp = resp_info.value
+        config_url = resp.url
+        status = resp.status
+      except PwTimeout:
+        if not seen:
+          raise AuthError("vimeo player did not request its config after Play "
+                          "(site slow?) — retry with --headed to watch.")
+        config_url = seen[0]
+        status = 200
+      if debug:
+        print(f"debug-login: vimeo intercept status={status} "
+              f"url={_debug_redact_url(config_url)}", file=sys.stderr)
+      for c in ctx.cookies():
         try:
-          page.goto(watch_url, wait_until="domcontentloaded", timeout=45000)
-          play = page.get_by_role("button", name="Play").first
-          play.wait_for(state="visible", timeout=30000)
-          play.scroll_into_view_if_needed(timeout=10000)
-        except PwTimeout:
-          raise AuthError("vimeo Play button never appeared "
-                          "(page format changed?) — retry with --headed to watch.")
-        try:
-          with page.expect_response(
-              lambda resp: "player.vimeo.com" in resp.url and "/config" in resp.url,
-              timeout=45000) as resp_info:
-            play.click(timeout=15000)
-          resp = resp_info.value
-          config_url = resp.url
-          status = resp.status
-        except PwTimeout:
-          if not seen:
-            raise AuthError("vimeo player did not request its config after Play "
-                            "(site slow?) — retry with --headed to watch.")
-          config_url = seen[0]
-          status = 200
-        if debug:
-          print(f"debug-login: vimeo intercept status={status} "
-                f"url={_debug_redact_url(config_url)}", file=sys.stderr)
-        for c in ctx.cookies():
-          try:
-            session.cookies.set(c["name"], c["value"],
-                                domain=c.get("domain", ""),
-                                path=c.get("path", "/"))
-          except Exception:
-            pass
-        if debug:
-          try:
-            names = sorted({c.name for c in session.cookies})
-          except Exception:
-            names = []
-          print(f"debug-login: vimeo harvest cookies={names}", file=sys.stderr)
-      finally:
-        try:
-          ctx.close()
+          session.cookies.set(c["name"], c["value"],
+                              domain=c.get("domain", ""),
+                              path=c.get("path", "/"))
         except Exception:
           pass
+      if debug:
         try:
-          browser.close()
+          names = sorted({c.name for c in session.cookies})
         except Exception:
-          pass
+          names = []
+        print(f"debug-login: vimeo harvest cookies={names}", file=sys.stderr)
+    finally:
+      try:
+        ctx.close()
+      except Exception:
+        pass
     if status != 200:
       raise AuthError(f"vimeo player config rejected (HTTP {status}) — private, "
                       "password-protected, or embed-restricted video?")

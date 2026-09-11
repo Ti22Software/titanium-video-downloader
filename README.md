@@ -157,6 +157,17 @@ read -s TI22_VIDEO_DL_STUDYGATEWAY_PASSWORD; export TI22_VIDEO_DL_STUDYGATEWAY_P
 .venv/bin/ti22-video-dl "<url>" --quality 480p --on-missing-quality=ask  # full list + skip, TTY only
 ```
 
+**Batch downloads** (sequential, one shared session + browser):
+
+```bash
+# batch.txt: "URL [QUALITY]" per line, # comments and blanks ignored
+.venv/bin/ti22-video-dl --batch-file batch.txt --output-dir ./series
+# CLI URLs combine with the file (file entries first), dupes collapse
+.venv/bin/ti22-video-dl --batch-file batch.txt "https://vimeo.com/123" --no-auth
+```
+
+Each entry resolves with its own quality (line value, else `--quality`, else best), existing outputs skip with a note (re-runs retry only failures), one video's failure never stops the batch, and the run ends with an `ok/skipped/failed` ledger — exit code is the failure count. Disk is gated upfront on summed estimates, then re-checked per video. `--pick` prompts per video on TTY; `--list-qualities` modes stay single-download.
+
 `size` everywhere means estimated *total* download (video rung + the selected audio rendition, container overhead excluded) — an upper bound, typically landing within ~5% above the final file.
 
 ---
@@ -198,7 +209,7 @@ Optional `.env` file (flat `KEY=VALUE`, real environment always wins): `./.env` 
 - **Sites change shape.** Selectors, form fields, and player internals drift; the offline suite pins *our* logic, live runs are the real check. Fresh failures deserve a DevTools look before a code look.
 - **Cloudflare-gated origins** (Rumble) need the browser bootstrap path; pure-`requests` returns 403 there by design.
 - **The pinned static ffmpeg segfaults** in its TS demuxer on some files — the remuxer falls back to system ffmpeg automatically and says so. Upstream report pending.
-- **Single downloads only** — no batch mode yet; one URL per run, one output file, refusal (not overwrite) on name collision.
+- **Refusal (not overwrite)** on name collision — single runs fail, batch entries skip with a note.
 - **Disk space is preflighted, not assumed** — the tool estimates the download, checks both the temp and output filesystems, and refuses before downloading a single byte when short (override with `--no-space-check`, e.g. for NAS/cloud drives that can't be stat'ed). `--output-dir` and `--temp-dir` (RAM drives welcome) control where outputs and intermediates land; a bare `-o` filename joins under `--output-dir`, a dir-ful `-o` wins outright.
 
 Only download content you have the rights to. This tool is built for your own videos and openly licensed material.
