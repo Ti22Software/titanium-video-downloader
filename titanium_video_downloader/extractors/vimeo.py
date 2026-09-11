@@ -83,6 +83,7 @@ class VimeoAuth(AuthProvider):
 
   site_key = "vimeo"
   requires_auth = False
+  cookie_domains = ("vimeo.com",)
 
   # Set by cli with --headed on vimeo: skip the fast path for a visible
   # harvest; headedness follows --headed. Documented hook, not ABC surface.

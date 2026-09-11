@@ -14,6 +14,9 @@ class RightNowMediaAuth(AuthProvider):
 
   site_key = "rightnowmedia"
   requires_auth = True
+  # No cookie_domains until the probe establishes the real login domain —
+  # base () means per-site cookies never gate true (falls back to normal
+  # auth, i.e. the stub error, same as today).
 
   def match(self, url):
     return "rightnowmedia" in _host(url)

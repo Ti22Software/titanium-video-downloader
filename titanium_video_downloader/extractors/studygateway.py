@@ -34,6 +34,7 @@ class StudyGatewayAuth(AuthProvider):
 
   site_key = "studygateway"
   requires_auth = True
+  cookie_domains = ("studygateway.com",)
 
   def match(self, url):
     return _host(url) == "watch.studygateway.com"
@@ -126,7 +127,8 @@ class StudyGatewayAuth(AuthProvider):
     except requests.RequestException as e:
       fail(f"could not fetch watch page: {e}")
     if r.status_code in (401, 403):
-      fail("watch page rejected — not logged in. Pass --email/--password or --cookies.")
+      fail("watch page rejected — not logged in (stale cookies? re-export "
+           "a fresh cookies file). Pass --email/--password or --cookies.")
     if r.status_code != 200:
       fail(f"watch page returned HTTP {r.status_code}.")
     html = r.text

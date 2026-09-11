@@ -3,6 +3,7 @@
 import getpass
 import os
 import sys
+import time
 
 import requests
 
@@ -95,13 +96,67 @@ def get_creds(args, site_key=None):
   return email, password, source
 
 
-def load_cookies(session, path):
-  """Load Netscape-format cookies.txt into session (manual fallback)."""
+def load_cookies(session, path, label="--cookies"):
+  """Load Netscape-format cookies.txt into session (manual fallback).
+
+  Expired entries still load (servers decide, not us) but each earns a
+  stderr note naming the cookie — never values — so a stale file fails
+  loudly at resolve with a re-export pointer instead of silent confusion.
+  """
   import http.cookiejar as cj
   jar = cj.MozillaCookieJar(str(path))
   try:
     jar.load(ignore_discard=True, ignore_expires=True)
   except Exception as e:
-    raise AuthError(f"could not load --cookies {path}: {e}")
+    raise AuthError(f"could not load {label} {path}: {e}")
+  now = time.time()
+  for c in jar:
+    try:
+      expired = bool(c.expires) and c.expires < now
+    except Exception:
+      expired = False
+    if expired:
+      print(f"note: {label} cookie '{c.name}' expired ({path}) — "
+            f"re-export if login fails", file=sys.stderr)
   session.cookies.update(jar)
   return session
+
+
+def site_cookies_env(site_key):
+  """Per-site cookies-file path from TI22_VIDEO_DL_<SITE>_COOKIES, or None."""
+  key = (site_key or "").upper()
+  if not key:
+    return None
+  path = os.environ.get(f"TI22_VIDEO_DL_{key}_COOKIES")
+  return path or None
+
+
+def _domain_match(cookie_domain, domains):
+  """True when a jar cookie domain belongs to one of the site domains.
+
+  Leading-dot (domain cookie) and bare (host-only) forms both normalize;
+  matching is exact-or-suffix on dot boundaries so `evilexample.com`
+  never matches `example.com`.
+  """
+  cand = (cookie_domain or "").lower().lstrip(".")
+  for dom in domains or ():
+    dom = (dom or "").lower().lstrip(".")
+    if not dom:
+      continue
+    if cand == dom or cand.endswith("." + dom):
+      return True
+  return False
+
+
+def site_cookie_count(session, domains):
+  """Number of session-jar cookies belonging to the site domains."""
+  try:
+    jar = session.cookies
+  except AttributeError:
+    return 0
+  try:
+    cookies = list(jar)
+  except TypeError:
+    return 0
+  return sum(1 for c in cookies
+             if _domain_match(getattr(c, "domain", ""), domains))

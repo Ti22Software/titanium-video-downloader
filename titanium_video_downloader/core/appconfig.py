@@ -22,6 +22,7 @@ _BOOL_KEYS = (
   "headed",
   "no_auth",
   "pick_always",
+  "prefer_cookies",
 )
 
 _STR_KEYS = (
@@ -45,6 +46,7 @@ BUILTINS = {
   "headed": False,
   "no_auth": False,
   "pick_always": False,
+  "prefer_cookies": False,
 }
 
 _ON_MISSING_CHOICES = ("fallback", "fail", "ask")

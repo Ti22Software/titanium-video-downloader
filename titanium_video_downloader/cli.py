@@ -40,6 +40,8 @@ from .core.session import (
   get_creds,
   load_cookies,
   new_session,
+  site_cookie_count,
+  site_cookies_env,
 )
 from .extractors.base import AuthError, fail, provider_for, register_provider
 from .extractors.generic import GenericAuth
@@ -63,12 +65,13 @@ def _env_creds_present(site_key):
   return any(os.environ.get(n) for n in names)
 
 
-def _auth_mode(args, prov):
+def _auth_mode(args, prov, cookies_for_site=False):
   """Return 'none'|'cookies'|'browser'|'password', or fail() on conflicts.
 
   Login is automatic, never a user decision: auth-required sites always
   harvest via browser, no-auth sites skip (explicit creds still reach
-  login() so future real logins keep working). Pure decision helper
+  login() so future real logins keep working). cookies_for_site is
+  computed by the caller (jar truth-check), keeping this helper pure
   (no I/O) so the matrix is unit-testable.
   """
   if args.no_auth:
@@ -80,8 +83,10 @@ def _auth_mode(args, prov):
       fail(f"{prov.site_key} requires auth — omit --no-auth or pass "
            f"--email/--password (TI22_VIDEO_DL_{site}_EMAIL).")
     return "none"
-  if args.cookies:
+  if cookies_for_site:
     return "cookies"
+  # An explicit --cookies file with no entries for this site falls back
+  # to normal auth (the caller truth-checked the jar); nothing to do here.
   if prov.requires_auth:
     return "browser"
   return "password"
@@ -91,8 +96,11 @@ def _apply_noauth_override(args, explicit):
   """Explicit CLI login signals beat a layered config no_auth=true.
 
   Returns the effective no_auth. CLI --no-auth itself always wins (it is
-  explicit); explicit --email/--password/--cookies override a config-file
-  no_auth with a note. Pure (no I/O) for tests.
+  explicit, and its conflict with CLI --prefer-cookies/--cookies is
+  checked separately in main). Explicit --email/--password/--cookies or
+  --prefer-cookies override a config-file no_auth with a note; two
+  layered trues resolve to no_auth (skip) with a note. Pure (no I/O)
+  for tests.
   """
   if "no_auth" in explicit:
     return bool(args.no_auth)
@@ -100,7 +108,39 @@ def _apply_noauth_override(args, explicit):
     print("note: explicit login options override config no_auth=true; "
           "logging in", file=sys.stderr)
     return False
+  if args.no_auth and args.prefer_cookies:
+    if "prefer_cookies" in explicit:
+      print("note: explicit --prefer-cookies overrides config no_auth=true; "
+            "logging in", file=sys.stderr)
+      return False
+    print("note: config prefer_cookies=true conflicts with config "
+          "no_auth=true; no_auth wins", file=sys.stderr)
+    return True
   return bool(args.no_auth)
+
+
+def _site_cookies_path(args, prov):
+  """Return (source, path) for this site's cookies file, or (None, None).
+
+  Explicit --cookies path is exclusive (env ignored entirely); otherwise
+  the per-site TI22_VIDEO_DL_<SITE>_COOKIES env applies only when cookie
+  preference is enabled (CLI --prefer-cookies or config prefer_cookies).
+  Pure (no I/O) for tests.
+  """
+  if isinstance(getattr(args, "cookies", None), str):
+    return "explicit", args.cookies
+  if getattr(args, "prefer_cookies", False):
+    env_path = site_cookies_env(prov.site_key)
+    if env_path:
+      return "env", env_path
+  return None, None
+
+
+def _cookies_label(source, site_key):
+  """Human label for a cookie source (names only, never values)."""
+  if source == "env":
+    return f"TI22_VIDEO_DL_{site_key.upper()}_COOKIES"
+  return "--cookies"
 
 
 def main(argv=None):
@@ -138,7 +178,9 @@ def main(argv=None):
                   help="keep video/audio intermediates and parts dir")
   ap.add_argument("--email", default=None, help="login email (or TI22_VIDEO_DL_<SITE>_EMAIL)")
   ap.add_argument("--password", default=None, help="login password (or TI22_VIDEO_DL_<SITE>_PASSWORD)")
-  ap.add_argument("--cookies", default=None, help="Netscape cookies.txt fallback for bot-blocked login (export logged-in browser cookies for .studygateway.com)")
+  ap.add_argument("--cookies", default=None, help="Netscape cookies.txt, exclusive single file (per-site truth-check decides which sites use it; env files ignored)")
+  ap.add_argument("--prefer-cookies", action="store_true", default=None,
+                  help="prefer per-site TI22_VIDEO_DL_<SITE>_COOKIES files over normal login (config prefer_cookies; missing file for a site falls back normally)")
   ap.add_argument("--login-only", action="store_true",
                   help="login + resolve embed URL, print it, and exit")
   ap.add_argument("--debug-login", action="store_true", default=None,
@@ -176,6 +218,10 @@ def main(argv=None):
   config_path = user_path(args.config) if args.config else None
   explicit = {k for k in BUILTINS if getattr(args, k, None) is not None}
   args, config_sources = resolve_config(args, config_path=config_path)
+  if ("no_auth" in explicit and args.no_auth
+          and "prefer_cookies" in explicit and args.prefer_cookies):
+    fail("--no-auth conflicts with --prefer-cookies "
+         "(one run can't both skip and prefer login).")
   args.no_auth = _apply_noauth_override(args, explicit)
   if args.print_config:
     found = config_path if config_path else default_config_path()
@@ -319,16 +365,40 @@ def _resolve_entry(session, args, url, quality, tag, batch, authed,
   input_url = url
   prov = provider_for(url)
   if prov is not None:
-    mode = _auth_mode(args, prov)
+    csource, cpath = _site_cookies_path(args, prov)
+    if csource == "env":
+      loaded = getattr(args, "_cookies_loaded", None)
+      if loaded is None:
+        loaded = set()
+        args._cookies_loaded = loaded
+      if cpath not in loaded:
+        try:
+          load_cookies(session, user_path(cpath),
+                       label=_cookies_label(csource, prov.site_key))
+        except AuthError as e:
+          fail(str(e))
+        loaded.add(cpath)
+    site_n = (site_cookie_count(session, prov.cookie_domains)
+              if csource else 0)
+    if csource and not site_n:
+      print(f"note: {_cookies_label(csource, prov.site_key)} has no cookies "
+            f"for {prov.site_key}, continuing with normal login",
+            file=sys.stderr)
+    mode = _auth_mode(args, prov, cookies_for_site=site_n > 0)
     if prov.site_key in authed and mode in ("password", "browser"):
       if args.debug_login:
         print(f"debug-login: reusing {prov.site_key} session", file=sys.stderr)
     elif mode == "none":
       if _env_creds_present(prov.site_key):
         print("note: ignoring configured credentials due to --no-auth", file=sys.stderr)
+      if csource:
+        print(f"note: ignoring {_cookies_label(csource, prov.site_key)} "
+              f"due to --no-auth", file=sys.stderr)
       print(f"note: --no-auth accepted for {prov.site_key}, skipping login", file=sys.stderr)
     elif mode == "cookies":
-      print("note: using --cookies session, skipping password login", file=sys.stderr)
+      print(f"note: using {_cookies_label(csource, prov.site_key)} session "
+            f"({site_n} cookies for {prov.site_key}), skipping password login",
+            file=sys.stderr)
     elif mode == "password" and not prov.requires_auth and not (args.email or args.password):
       # No-auth-capable site, no creds given: skip the login call instead of
       # printing a "login ok" no authentication earned. (Explicit creds fall

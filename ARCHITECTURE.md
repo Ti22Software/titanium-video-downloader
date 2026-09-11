@@ -55,8 +55,11 @@ seconds) or the **embed URL** — both minted-and-consumed live.
 Login paths: browser harvest via Playwright Chromium (passes reCAPTCHA v3
 natively; needs `pip install playwright && playwright install chromium`;
 automatic for auth-required sites — login is never a user decision),
-`--cookies` Netscape export (manual fallback, applies to this run's matched
-provider). `--no-auth` skips login entirely on
+`--cookies` exclusive Netscape export (per-site jar truth-check decides
+which sites use it) or per-site `TI22_VIDEO_DL_<SITE>_COOKIES` env gated
+by `--prefer-cookies`/`prefer_cookies` (debug/dev; default off; stale
+entries warn at load, failures name re-export). `--no-auth` skips login
+entirely on
 sites with `requires_auth=False` (public vimeo); auth-required sites fail
 fast naming the site. See Phase 3.
 
@@ -134,9 +137,9 @@ vimeo, rumble, fetcher, remux, ffmpeg resolve).
 | Vimeo public | `extractors/vimeo.py` | `VimeoAuth` (clip regex incl. unlisted/channels/groups; fast bare-config + watch-page Play-click intercept fallback; `video.privacy` gate); downstream shared verbatim |
 | Stubs | `extractors/rightnowmedia.py`, `generic.py` | Real `match()`, `NotImplementedError` elsewhere |
 | Rumble public | `extractors/rumble.py` | `RumbleAuth` (watch→key→embedJS, muxed-HLS tar renditions + progressive-mp4 variant (all rungs, Range-resume direct, empty audio), browser bootstrap for gated origin fetches, live/DRM gates, shape-naming diagnostic on empty resolve); sizes nominal `meta` bytes (upper bound — VBR content lands lower); future: direct-ffmpeg HLS option for speed-over-progress users |
-| Session | `core/session.py` | UA/headers/timeouts, `new_session`, per-site `get_creds`, `load_cookies` |
+| Session | `core/session.py` | UA/headers/timeouts, `new_session`, per-site `get_creds`, `load_cookies` (expiry warnings), per-site cookies env + jar domain truth-check |
 | Env file | `core/envfile.py` | stdlib `.env` loader (flat `KEY=VALUE`), `titanium-software/ti22-video-dl` defaults |
-| App config | `core/appconfig.py` | `config.toml` via stdlib tomllib (no new dep); CLI > env > file > builtins layering, lenient bad keys, `pick_always` tri-state with `--pick`/`--no-pick`, `--print-config` snapshot |
+| App config | `core/appconfig.py` | `config.toml` via stdlib tomllib (no new dep); CLI > env > file > builtins layering, lenient bad keys, `pick_always` tri-state with `--pick`/`--no-pick`, `prefer_cookies` gate for per-site cookies env, `--print-config` snapshot |
 | Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments`, `order_by_height`, `quality_items`, `pick_index` |
 | Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers/assemble), `download_direct` (single-file Range resume, fail-closed size check), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
 | Disk | `core/disk.py` | `download_estimate` (single source with listings), split temp/output `check_space` gate + `human_bytes` |

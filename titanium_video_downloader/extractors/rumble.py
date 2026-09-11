@@ -160,6 +160,7 @@ class RumbleAuth(AuthProvider):
 
   site_key = "rumble"
   requires_auth = False
+  cookie_domains = ("rumble.com",)
 
   def __init__(self):
     # Per-watch-url bootstrap cache: (watch_html, embedjs_text). The CLI

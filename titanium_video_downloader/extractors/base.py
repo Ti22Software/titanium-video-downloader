@@ -110,10 +110,13 @@ class AuthProvider:
   site_key drives per-site env names (TI22_VIDEO_DL_<SITE>_EMAIL) and debug labels.
   requires_auth gates --no-auth: sites that mint tokens server-side must
   refuse tokenless runs fail-fast instead of 401ing downstream.
+  cookie_domains lists the cookie domains belonging to the site, for the
+  per-site cookies truth-check (does this jar actually serve this site?).
   """
 
   site_key = "generic"
   requires_auth = True
+  cookie_domains = ()
 
   def match(self, url):
     raise NotImplementedError

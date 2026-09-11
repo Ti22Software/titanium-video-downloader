@@ -77,9 +77,10 @@ titanium-video-downloader/
 │       ├── rumble.py          watch→key→embedJS, muxed-HLS + progressive-mp4 renditions, gated-origin bootstrap
 │       ├── rightnowmedia.py   stub — match real, rest waits for probe
 │       └── generic.py         fallback slot for the unknown site
-├── tests/                     148 offline tests (no network): parsers, auth, login stubs,
+├── tests/                     166 offline tests (no network): parsers, auth, login stubs,
 │                              no-auth matrix, env/.env/config.toml, quality, remux, ffmpeg resolve,
-│                              batch ledger, rumble variants, direct download
+│                              batch ledger, rumble variants, direct download,
+│                              per-site cookies truth-check
 ├── ti22_video_dl.py           thin shim so `python ti22_video_dl.py ...` keeps working
 ├── pyproject.toml             titanium-video-downloader 0.1.0, ti22-video-dl script,
 │                              browser/ffmpeg/test extras
@@ -125,7 +126,7 @@ Downloads Chromium into the shared per-user cache (reused across projects). Only
 .venv/bin/python -m pytest tests/ -q
 ```
 
-This runs the 148 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
+This runs the 166 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
 
 ---
 
@@ -177,7 +178,7 @@ Each entry resolves with its own quality (line value, else `--quality`, else bes
 
 ## Credentials and auth
 
-Login is automatic, never a decision: auth-required sites (StudyGateway) always harvest via browser; public sites (Vimeo, Rumble) skip unless given explicit creds. `--no-auth` asserts skipping on no-auth sites (explicit creds/cookies alongside it are an error); on auth sites it fails fast by name. CLI `--no-auth` beats a config `no_auth = true`, and explicit CLI login options beat that too.
+Login is automatic, never a decision: auth-required sites (StudyGateway) always harvest via browser; public sites (Vimeo, Rumble) skip unless given explicit creds. `--no-auth` asserts skipping on no-auth sites (explicit creds/cookies/prefer alongside it are an error); on auth sites it fails fast by name. CLI `--no-auth` beats a config `no_auth = true`, and explicit CLI login options beat that too. Cookie files are a debug/dev tool (default off): `--cookies` one exclusive file, or per-site env + `--prefer-cookies`; each entry uses cookies only when the jar actually holds that site's cookies, else normal login.
 
 Precedence for every site: `--email` / `--password` flags → `TI22_VIDEO_DL_<SITE>_*` env vars → interactive password prompt (email known + terminal). No generic fallback by design. Values are never logged; `--debug-login` prints only redacted metadata (`cred_source=flag|site-env|prompt|missing`, cookie *names*).
 
@@ -205,16 +206,18 @@ debug_login = false
 headed = false
 no_auth = false
 pick_always = false           # config-only: prompt the picker every resolve
+prefer_cookies = false        # consult per-site TI22_VIDEO_DL_<SITE>_COOKIES files
 ```
 
 Unknown keys, wrong types, and malformed TOML never fail a run — a `note:` names the key and it's ignored. `--pick` forces picking (even over `pick_always = false`); `--no-pick` forces it off (even over `true`); `pick_always` on a non-terminal notes and falls back to default quality. `--config PATH` points at another file; `--print-config` dumps effective values + sources as JSON and exits.
 
 | Situation | What to do |
 | --- | --- |
-| Bot check blocks password login | `--cookies cookies.txt` (Netscape export of a logged-in browser) |
+| Bot check blocks password login | `--cookies sg.txt` (exclusive Netscape export; only sites with entries in it use cookies, others auth normally) |
+| Per-site cookie files (debug/dev) | `TI22_VIDEO_DL_<SITE>_COOKIES=~/cookies/sg.txt` + `--prefer-cookies` (or config `prefer_cookies`); sites without a file auth normally; stale files warn at load, failures name re-export |
 | 2FA / CAPTCHA / headed debugging | `--headed` (visible browser wherever one runs) |
 | Just verifying auth + resolve | `--login-only` (prints the resolved URL, exits) |
-| Site needs no login | Nothing — or `--no-auth` to assert it (auth-required sites fail fast naming themselves) |
+| Site needs no login | Nothing — or `--no-auth` to assert it (auth-required sites fail fast naming themselves; `--no-auth` + `--prefer-cookies`/`--cookies` together is an error) |
 | Diagnosing login flow | `--debug-login` (redacted URLs, parse flags, auth markers) |
 
 ---
@@ -224,7 +227,7 @@ Unknown keys, wrong types, and malformed TOML never fail a run — a `note:` nam
 - Python `==3.12.*`, stdlib + [`requests`](https://requests.readthedocs.io/) (+ optional [`tqdm`](https://tqdm.tqdm.pro/))
 - [`playwright`](https://playwright.dev/python/) 1.62 (`browser` extra) — URL harvesting only, never downloading
 - [`imageio-ffmpeg`](https://github.com/imageio/imageio-ffmpeg) 0.6.0 → ffmpeg 7.0.2-static (`ffmpeg` extra), system ffmpeg fallback
-- [`pytest`](https://pytest.org/) 9 (`test` extra) — 148 offline tests
+- [`pytest`](https://pytest.org/) 9 (`test` extra) — 166 offline tests
 - `uv` for environments, `git` for everything else
 
 ---

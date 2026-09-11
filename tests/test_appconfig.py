@@ -95,6 +95,20 @@ def test_blank_config_value_falls_through_with_note(capsys):
   assert "empty value" in err and "'quality'" in err
 
 
+def test_prefer_cookies_layering():
+  args, sources = ac.resolve_config(_args(), file_pairs={})
+  assert args.prefer_cookies is False
+  assert sources["prefer_cookies"] == "builtin:False"
+  args, sources = ac.resolve_config(
+    _args(), file_pairs={"prefer_cookies": True})
+  assert args.prefer_cookies is True
+  assert sources["prefer_cookies"] == "config"
+  args, sources = ac.resolve_config(
+    _args(prefer_cookies=True), file_pairs={"prefer_cookies": False})
+  assert args.prefer_cookies is True
+  assert sources["prefer_cookies"] == "cli"
+
+
 def test_blank_cli_flag_fails_like_bad_flag(capsys):
   from titanium_video_downloader.cli import main
   with pytest.raises(SystemExit) as ei:
