@@ -167,6 +167,36 @@ def test_remux_final_failure_prints_no_retry_note(tmp_path, monkeypatch, capsys)
   assert "tail-err" in err
 
 
+def test_ffmpeg_error_no_space_names_disk(capsys):
+  from titanium_video_downloader.core.mux import _ffmpeg_error
+  with pytest.raises(SystemExit):
+    _ffmpeg_error("mux", "[out#0] Error opening output: No space left on device")
+  err = capsys.readouterr().err
+  assert "disk full during ffmpeg mux" in err
+  assert "re-run to resume" in err
+  assert err.count("error:") == 1
+
+
+def test_ffmpeg_error_trailer_eio_names_io_with_tail(capsys):
+  from titanium_video_downloader.core.mux import _ffmpeg_error
+  body = ("[out#0/mp4] Error writing trailer: Input/output error\n"
+          "[out#0/mp4] Error closing file: Input/output error")
+  with pytest.raises(SystemExit):
+    _ffmpeg_error("mux", body)
+  err = capsys.readouterr().err
+  assert "disk I/O error" in err
+  assert "Error writing trailer" in err  # raw tail preserved for forensics
+
+
+def test_ffmpeg_error_generic_unchanged(capsys):
+  from titanium_video_downloader.core.mux import _ffmpeg_error
+  with pytest.raises(SystemExit):
+    _ffmpeg_error("remux", "Something unexpected: bad option")
+  err = capsys.readouterr().err
+  assert "error: ffmpeg remux failed." in err
+  assert "bad option" in err
+
+
 def test_mux_detaches_stdin(tmp_path, monkeypatch):
   """ffmpeg must never hold the user's tty: a crash would otherwise leave
   echo disabled (invisible typing until `reset`)."""

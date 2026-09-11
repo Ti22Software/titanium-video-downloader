@@ -66,13 +66,35 @@ def mux(video_path, audio_path, out_path, total_duration=None, ffmpeg=None):
   if proc.stderr:
     proc.stderr.close()
   if rc != 0:
-    print(err[-3000:], file=sys.stderr)
-    fail("ffmpeg mux failed.")
+    _ffmpeg_error("mux", err)
   el = time.monotonic() - start
   _write_mux_line(f"Muxing: done in {el:.1f}s")
   sys.stderr.write("\n")
   sys.stderr.flush()
   return out_path
+
+
+def _ffmpeg_error(what, err_text):
+  """Classify an ffmpeg failure into one GUI-bubblable error line.
+
+  A starved disk usually surfaces as write/trailer/closing EIO text rather
+  than a clean ENOSPC string, so match those markers first after the
+  explicit case. Anything unrecognized keeps the legacy generic message
+  plus the raw tail for unfamiliar failures.
+  """
+  err = err_text or ""
+  low = err.lower()
+  if "no space left" in low:
+    fail(f"disk full during ffmpeg {what} — free space or point "
+         "--temp-dir/--output-dir elsewhere and re-run to resume "
+         "(segments are kept).")
+  if ("error writing trailer" in low or "error closing file" in low
+          or ("input/output error" in low and "muxing" in low)):
+    print(err[-3000:], file=sys.stderr)
+    fail(f"ffmpeg {what} hit a disk I/O error (often a full disk — "
+         "check free space with df, then re-run to resume).")
+  print(err[-3000:], file=sys.stderr)
+  fail(f"ffmpeg {what} failed.")
 
 
 def remux_concat(parts_dir, out_path, ffmpeg=None):
@@ -118,5 +140,4 @@ def remux_concat(parts_dir, out_path, ffmpeg=None):
     if i < len(candidates) - 1:
       print(f"note: ffmpeg {cand} failed (rc={proc.returncode}), "
             "retrying with system ffmpeg", file=sys.stderr)
-  print(last_err, file=sys.stderr)
-  fail("ffmpeg remux failed.")
+  _ffmpeg_error("remux", last_err)

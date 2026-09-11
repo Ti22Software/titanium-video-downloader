@@ -90,6 +90,10 @@ exist), skipped by `--no-space-check`, list modes return earlier:
 - Mid-download write failures (ENOSPC with `--no-space-check`, permissions)
   fail cleanly via `io_fail()` naming the operation — single stderr line for
   future GUI bubbling; partial state stays resume-compatible.
+- ffmpeg mux/remux failures are classified the same way (`_ffmpeg_error()`):
+  explicit no-space text → disk-full message; write/trailer/closing EIO
+  markers → disk-I/O message naming `df`; anything else keeps the legacy
+  generic message plus the raw tail.
 - `--output-dir DIR` roots auto-named outputs (`-o` still wins outright);
   `--temp-dir DIR` roots `<stem>.ti22` workdirs (fast local disk, RAM
   drive, or NAS staging — created with `mkdir -p`).
