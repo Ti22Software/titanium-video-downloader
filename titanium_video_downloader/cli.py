@@ -80,8 +80,9 @@ def _auth_mode(args, prov, cookies_for_site=False):
         fail(f"--no-auth conflicts with --{opt.replace('_', '-')}.")
     if prov.requires_auth:
       site = prov.site_key.upper()
-      fail(f"{prov.site_key} requires auth — omit --no-auth or pass "
-           f"--email/--password (TI22_VIDEO_DL_{site}_EMAIL).")
+      fail(f"{prov.site_key} requires auth — omit --no-auth (or set config "
+           f"no_auth=false) or pass --email/--password "
+           f"(TI22_VIDEO_DL_{site}_EMAIL).")
     return "none"
   if cookies_for_site:
     return "cookies"
@@ -106,6 +107,12 @@ def _apply_noauth_override(args, explicit):
     return bool(args.no_auth)
   if args.no_auth and any((args.email, args.password, args.cookies)):
     print("note: explicit login options override config no_auth=true; "
+          "logging in", file=sys.stderr)
+    return False
+  # --headed is layered (config headed=true exists), so only an explicit
+  # CLI --headed counts as login intent; two layered trues keep no_auth.
+  if args.no_auth and args.headed and "headed" in explicit:
+    print("note: explicit --headed overrides config no_auth=true; "
           "logging in", file=sys.stderr)
     return False
   if args.no_auth and args.prefer_cookies:
@@ -170,7 +177,7 @@ def main(argv=None):
   ap.add_argument("--ffmpeg-path", default=None,
                   help="explicit ffmpeg binary (default: imageio-ffmpeg extra, then PATH)")
   ap.add_argument("--quality", default=None,
-                  help="height label (1080p/720p/540p/360p/240p), 'best', or rendition id prefix (config or default: best = highest rung)")
+                  help="height label (1080p/720p/540p/360p/240p), 'best', or rendition id prefix (config or default: best = highest video quality)")
   ap.add_argument("--output", "-o", default=None, help="output MP4 path")
   ap.add_argument("--concurrency", "-j", type=int, default=None,
                   help="parallel segment downloads (config or default 4)")
@@ -218,10 +225,13 @@ def main(argv=None):
   config_path = user_path(args.config) if args.config else None
   explicit = {k for k in BUILTINS if getattr(args, k, None) is not None}
   args, config_sources = resolve_config(args, config_path=config_path)
-  if ("no_auth" in explicit and args.no_auth
-          and "prefer_cookies" in explicit and args.prefer_cookies):
-    fail("--no-auth conflicts with --prefer-cookies "
-         "(one run can't both skip and prefer login).")
+  if "no_auth" in explicit and args.no_auth:
+    if "prefer_cookies" in explicit and args.prefer_cookies:
+      fail("--no-auth conflicts with --prefer-cookies "
+           "(one run can't both skip and prefer login).")
+    if "headed" in explicit and args.headed:
+      fail("--no-auth conflicts with --headed "
+           "(one run can't both skip login and open it).")
   args.no_auth = _apply_noauth_override(args, explicit)
   if args.print_config:
     found = config_path if config_path else default_config_path()

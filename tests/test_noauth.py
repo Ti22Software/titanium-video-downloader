@@ -22,7 +22,7 @@ from titanium_video_downloader.extractors.vimeo import VimeoAuth
 
 def _args(**kw):
   base = dict(email=None, password=None, cookies=None, prefer_cookies=False,
-              no_auth=False, quality="best", list_qualities=False,
+              headed=False, no_auth=False, quality="best", list_qualities=False,
               list_qualities_json=False, pick=False)
   base.update(kw)
   return argparse.Namespace(**base)
@@ -74,10 +74,33 @@ def test_noauth_override_explicit_cli_wins():
   assert _apply_noauth_override(ns, set()) is False
 
 
+def test_noauth_override_explicit_headed_wins(capsys):
+  # CLI --headed is login intent: beats layered config no_auth.
+  ns = _args(no_auth=True, headed=True)
+  assert _apply_noauth_override(ns, {"headed"}) is False
+  assert "explicit --headed overrides config no_auth" in capsys.readouterr().err
+  # Layered config headed=true is NOT intent: no_auth stands.
+  ns = _args(no_auth=True, headed=True)
+  assert _apply_noauth_override(ns, set()) is True
+
+
+def test_noauth_fail_names_config_source(capsys):
+  with pytest.raises(SystemExit):
+    _auth_mode(_args(no_auth=True), StudyGatewayAuth())
+  assert "config no_auth=false" in capsys.readouterr().err
+
+
 def test_cli_noauth_prefer_conflict():
   from titanium_video_downloader.cli import main
   with pytest.raises(SystemExit) as ei:
     main(["--no-auth", "--prefer-cookies", "https://vimeo.com/1"])
+  assert ei.value.code == 1
+
+
+def test_cli_noauth_headed_conflict():
+  from titanium_video_downloader.cli import main
+  with pytest.raises(SystemExit) as ei:
+    main(["--no-auth", "--headed", "https://vimeo.com/1"])
   assert ei.value.code == 1
 
 
