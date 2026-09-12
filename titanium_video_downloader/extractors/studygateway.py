@@ -7,6 +7,7 @@ playlist → segments → mux (ffprobe/VLC clean, md5-deterministic).
 import json
 import re
 import sys
+import time
 
 import requests
 
@@ -27,6 +28,75 @@ from .base import (
   _host,
   fail,
 )
+
+
+# Post-submit outcome polling: fail fast on a visible rejection while the
+# slow-good path (Cloudflare challenge + SAML auto-post) keeps the full
+# backstop. Bad creds 302 back to a login?SAMLRequest=… page rendering a
+# bare `div.error-message`-style container; good creds leave for
+# saml/consume → browse?ticket=. Uncertain states always resolve toward
+# waiting (today's floor) — only positive failure evidence fails fast.
+_LOGIN_SETTLE_S = 10
+_LOGIN_POLL_S = 1
+_LOGIN_BACKSTOP_S = 90
+
+
+def _login_error_text(page):
+  """Visible login-rejection text, or None. Never raises."""
+  try:
+    loc = page.locator('div[class*="error" i]')
+    try:
+      n = loc.count()
+    except Exception:
+      return None
+    for i in range(min(n, 5)):
+      try:
+        item = loc.nth(i)
+        if not item.is_visible():
+          continue
+        text = (item.inner_text() or "").strip()
+      except Exception:
+        continue
+      if text and re.search(r"credential|password|match|invalid|incorrect",
+                            text, re.IGNORECASE):
+        # Deliberately narrow (no bare "login"/"sign in"): an
+        # informational div must never fail a good login. Anything
+        # unmatched falls back to the full backstop wait.
+        return text[:160]
+  except Exception:
+    pass
+  return None
+
+
+def _wait_for_login_outcome(page):
+  """Poll post-submit state to the backstop. Returns on browse URL;
+  raises AuthError on visible rejection or, as before, on timeout."""
+  start = time.monotonic()
+  while True:
+    el = time.monotonic() - start
+    try:
+      url = page.url or ""
+    except Exception:
+      url = ""
+    if "/browse" in url:
+      return
+    if el >= _LOGIN_SETTLE_S and "/login" in url:
+      err = _login_error_text(page)
+      if err:
+        raise AuthError("browser login rejected — bad email/password "
+                        f"(site says: {err!r}).")
+    if el >= _LOGIN_BACKSTOP_S:
+      break
+    time.sleep(min(_LOGIN_POLL_S, max(0.1, _LOGIN_BACKSTOP_S - el)))
+  try:
+    cur = page.url or ""
+  except Exception:
+    cur = ""
+  if "/login" in cur:
+    raise AuthError("browser login timed out staying on the login page "
+                    "(check creds / 2FA / CAPTCHA; retry with --headed to watch).")
+  raise AuthError(f"browser login timed out at {_debug_redact_url(cur)} — "
+                  "site/Cloudflare slow? Retry, or add --headed to watch.")
 
 
 class StudyGatewayAuth(AuthProvider):
@@ -82,17 +152,10 @@ class StudyGatewayAuth(AuthProvider):
                         "(page format changed?) — retry with --headed to watch.")
       # Do NOT use expect_navigation: wrong creds / slow Cloudflare / JS
       # SAML auto-post may never fire a navigation (previously a raw
-      # TimeoutError traceback). Poll for the browse URL instead.
+      # TimeoutError traceback). Poll for the browse URL instead, failing
+      # fast when the page settles back on login with a visible rejection.
       # Hint stays generic on purpose — no chasing site copy changes.
-      try:
-        page.wait_for_url("**/browse**", timeout=90000)
-      except PwTimeout:
-        cur = page.url
-        if "/login" in cur:
-          raise AuthError("browser login timed out staying on the login page "
-                          "(check creds / 2FA / CAPTCHA; retry with --headed to watch).")
-        raise AuthError(f"browser login timed out at {_debug_redact_url(cur)} — "
-                        "site/Cloudflare slow? Retry, or add --headed to watch.")
+      _wait_for_login_outcome(page)
       html = page.content()
       st = _auth_state(html)
       _debug_auth_state("browser browse auth", html, debug)

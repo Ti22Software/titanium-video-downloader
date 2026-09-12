@@ -214,6 +214,7 @@ Unknown keys, wrong types, and malformed TOML never fail a run — a `note:` nam
 | Situation | What to do |
 | --- | --- |
 | Bot check blocks password login | `--cookies sg.txt` (exclusive Netscape export; only sites with entries in it use cookies, others auth normally) |
+| Wrong email/password | Fast failure naming the site's rejection (no 90s wait) |
 | Per-site cookie files (debug/dev) | `TI22_VIDEO_DL_<SITE>_COOKIES=~/cookies/sg.txt` + `--prefer-cookies` (or config `prefer_cookies`); relative names resolve CWD first, then the config dir; sites without a file auth normally; stale files warn at load, failures name re-export |
 | 2FA / CAPTCHA / headed debugging | `--headed` (visible browser wherever one runs) |
 | Just verifying auth + resolve | `--login-only` (prints the resolved URL, exits) |
