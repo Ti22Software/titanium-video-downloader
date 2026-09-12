@@ -55,6 +55,22 @@ All user output is still `print`s — stdout carries *results* (file paths, list
 
 ---
 
+## Features
+
+**Three sites, one tool.** StudyGateway with your own login, public Vimeo (including unlisted links), and public Rumble (including Shorts) — all through the same command. You hand it a watch-page URL and get back a seekable MP4 in the video's original quality, with no browser extensions, no screen recording, and no re-encoding.
+
+**See what you're getting before you download.** List every available quality with its real download size first, then pick exactly — a height label, the best published, or an interactive numbered picker. If the quality you asked for doesn't exist, the tool says what it's doing instead (nearest quality below), fails cleanly, or asks you — your choice, set once and forgotten.
+
+**Hand it a list and walk away.** A batch file is just URLs with optional qualities, one per line. The tool works through them in order with a single shared login per site, skips files you already have (so re-runs retry only failures), keeps going when one video fails, and finishes with a plain-English tally — how many succeeded, skipped, and failed. The exit code is the failure count, so scripts can trust it.
+
+**Logins that sort themselves out.** There is no login mode to choose: sites that need you get a real browser login (which sails through bot checks), public sites skip it. Your credentials live in environment variables or a `.env` file, saved logins can be reused from your own browser's cookie export, and public videos never ask for anything. Every run says what it decided, in redacted form — never your secrets.
+
+**Set it once, stop typing flags.** Default quality, download folders, login behavior — all of it lives in one `config.toml`, and anything you pass on the command line still wins for that run. A `--print-config` command shows the effective setup and where each value came from, so there's never a mystery about what the tool thinks you asked for.
+
+**Resumable, checked, and honest.** Downloads show live progress and survive interruption — rerunning picks up where it stopped, not from zero. Disk space is verified before a byte is fetched, existing files are never overwritten, and failures say what happened plus what to do (re-export stale cookies, point at the right `.env`, free up disk) instead of dumping a traceback.
+
+---
+
 ## What's inside the project folder
 
 ```
