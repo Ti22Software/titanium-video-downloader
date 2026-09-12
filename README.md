@@ -2,6 +2,22 @@
 
 A CLI that downloads streaming videos you have access to — StudyGateway (full login), public Vimeo, public Rumble — into local MP4 files. One tool, one pipeline, one video or a whole batch list at a time: resolve where the video lives, fetch its segments over plain HTTPS, and mux them into an MP4. No browser extensions, no screen recording, no re-encoding.
 
+## Contents
+
+- [What this project actually does](#what-this-project-actually-does)
+- [Why it's built this way](#why-its-built-this-way)
+- [Features](#features)
+- [What's inside the project folder](#whats-inside-the-project-folder)
+- [Setting it up on your own computer](#setting-it-up-on-your-own-computer)
+- [Trying it out](#trying-it-out)
+- [Credentials & Auth](#credentials--auth)
+- [Config file](#config-file)
+- [CLI flag reference](#cli-flag-reference)
+- [Tools used](#tools-used)
+- [Limitations (honest ones)](#limitations-honest-ones)
+- [Roadmap](#roadmap)
+- [License](#license)
+
 ## What this project actually does
 
 Streaming sites don't hand you a video file; they hand your browser a *recipe* for assembling one (a config URL, a playlist, a few hundred segment files). This tool speaks that recipe language directly: give it a watch-page URL and it logs in where needed, collects the segment URLs, downloads them concurrently with resume, and muxes them into a seekable MP4 with the original quality intact.
@@ -117,7 +133,7 @@ Requires [Git](https://git-scm.com/) and Python 3.12.
 
 ```bash
 mkdir -p ~/apps && cd ~/apps
-git clone <your-remote-url> titanium-video-downloader
+git clone https://github.com/Ti22Software/titanium-video-downloader.git
 cd titanium-video-downloader
 ```
 
