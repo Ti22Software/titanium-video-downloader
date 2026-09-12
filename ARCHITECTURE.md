@@ -180,7 +180,7 @@ fetcher incl. direct download, remux, ffmpeg resolve).
 | Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments`, `order_by_height`, `quality_items`, `pick_index` |
 | Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers/assemble), `download_direct` (single-file Range resume, fail-closed size check), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
 | Disk | `core/disk.py` | `download_estimate` (single source with listings), split temp/output `check_space` gate + `human_bytes` |
-| Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static (Linux) segfaults in mpegts demux on some files; Windows ships a Gyan 7.1 build, unknown pending a live Windows remux; upstream report TODO) |
+| Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static (Linux) segfaults in mpegts demux on some files; Windows Gyan 7.1 build passed a live 15-seg tar remux clean; upstream report TODO) |
 | Naming | `core/naming.py` | `sanitize`/`sanitize_path` |
 | Paths | `core/paths.py` | `user_path()` (`~`/`$VAR`), `config_relative_path()` (relative names: CWD, then config dir), `ffmpeg_path()` resolution order |
 | CLI | `cli.py` | argparse front-end + orchestration (`_resolve_entry`/`_download_entry` split, `run_batch` ledger, layered config resolution, automatic auth); entry points `ti22-video-dl` script + `__main__.py` |
