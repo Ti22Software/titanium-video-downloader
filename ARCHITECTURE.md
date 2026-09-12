@@ -159,7 +159,7 @@ exist), skipped by `--no-space-check`, list modes return earlier:
 ### Current module layout (`titanium_video_downloader/` package, v0.1.0)
 
 Phase 1 package move done: verbatim code motion, prints intact (event bus
-deferred), `ti22_video_dl.py` kept as a thin shim. 183 offline pytest tests green
+deferred), `ti22_video_dl.py` kept as a thin shim. 185 offline pytest tests green
 (naming, selection, parsers, auth markers, stubbed login, login waiter,
 env/no-auth/quality, batch ledger/gates, appconfig layering, per-site
 cookies truth-check, vimeo, rumble incl. shorts + progressive-mp4,
@@ -180,7 +180,7 @@ fetcher incl. direct download, remux, ffmpeg resolve).
 | Models | `core/models.py` | `parse_playlist`, select/labels, `resolve_segments`, `order_by_height`, `quality_items`, `pick_index` |
 | Fetch | `core/fetcher.py` | `fetch_json`, `fetch_text`, `_get_with_retry`, `download_rendition` (threads, manifest resume; optional init/suffix/headers/assemble), `download_direct` (single-file Range resume, fail-closed size check), `fetch_hls_chunklist` (tar-wrapped or plain m3u8) |
 | Disk | `core/disk.py` | `download_estimate` (single source with listings), split temp/output `check_space` gate + `human_bytes` |
-| Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static segfaults in mpegts demux on some files, upstream report TODO) |
+| Mux | `core/mux.py` | `mux` (ffmpeg `-progress` parsing), `remux_concat` (TS→MP4; falls back to system ffmpeg — imageio 7.0.2-static (Linux) segfaults in mpegts demux on some files; Windows ships a Gyan 7.1 build, unknown pending a live Windows remux; upstream report TODO) |
 | Naming | `core/naming.py` | `sanitize`/`sanitize_path` |
 | Paths | `core/paths.py` | `user_path()` (`~`/`$VAR`), `config_relative_path()` (relative names: CWD, then config dir), `ffmpeg_path()` resolution order |
 | CLI | `cli.py` | argparse front-end + orchestration (`_resolve_entry`/`_download_entry` split, `run_batch` ledger, layered config resolution, automatic auth); entry points `ti22-video-dl` script + `__main__.py` |

@@ -113,7 +113,7 @@ titanium-video-downloader/
 │       ├── rumble.py          watch→key→embedJS, muxed-HLS + progressive-mp4 renditions, gated-origin bootstrap
 │       ├── rightnowmedia.py   stub — match real, rest waits for probe
 │       └── generic.py         fallback slot for the unknown site
-├── tests/                     183 offline tests (no network): parsers, auth, login stubs + fail-fast waiter,
+├── tests/                     185 offline tests (no network): parsers, auth, login stubs + fail-fast waiter,
 │                              no-auth matrix, env/.env/config.toml, per-site cookies, quality, remux, ffmpeg resolve,
 │                              batch ledger, rumble variants, direct download
 ├── ti22_video_dl.py           thin shim so `python ti22_video_dl.py ...` keeps working
@@ -169,7 +169,31 @@ Downloads Chromium into the shared per-user cache (reused across projects). Only
 .venv/bin/python -m pytest tests/ -q
 ```
 
-This runs the 183 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
+This runs the 185 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
+
+### On Windows (CMD / PowerShell)
+
+Same flow, Windows paths. From the project folder in CMD:
+
+```cmd
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe -e ".[test,browser,ffmpeg]"
+.venv\Scripts\activate.bat
+.venv\Scripts\playwright.exe install chromium
+.venv\Scripts\python.exe -m pytest tests -q
+```
+
+In PowerShell, activation is `.venv\Scripts\Activate.ps1` (one-time
+`Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` if
+scripts are blocked); the other commands match with `.\` prefixes. CMD
+takes backslashes only — forward slashes are flag delimiters there.
+
+No system ffmpeg is needed on any platform: the binary ships inside the
+`ffmpeg` extra and is resolved internally via its API, never via `PATH`.
+Likewise `uv` fetches a matching Python automatically when yours doesn't
+qualify (system 3.13 → managed 3.12.13); `--python 3.12` plus
+`.python-version` pin that. `verify-video.sh` is bash-only — on Windows,
+confirm the MP4 by playing it.
 
 ---
 
@@ -260,7 +284,7 @@ Unknown keys, wrong types, and malformed TOML never fail a run — a `note:` nam
 | Bot check blocks password login | `--cookies sg.txt` (exclusive Netscape export; only sites with entries in it use cookies, others auth normally) |
 | Wrong email/password | Fast failure naming the site's rejection (no 90s wait) |
 | Per-site cookie files (debug/dev) | `TI22_VIDEO_DL_<SITE>_COOKIES=~/cookies/sg.txt` + `--prefer-cookies` (or config `prefer_cookies`); relative names resolve CWD first, then the config dir; sites without a file auth normally; stale files warn at load, failures name re-export |
-| 2FA / CAPTCHA / headed debugging | `--headed` (visible browser wherever one runs; also lifts a config `no_auth=true` block for the run) |
+| 2FA / CAPTCHA / headed debugging | `--headed` (visible browser wherever one runs; also lifts a config `no_auth=true` block for the run; needs a display server — headless environments need WSLg/`xvfb-run`) |
 | Just verifying auth + resolve | `--login-only` (prints the resolved URL, exits) |
 | Site needs no login | Nothing — or `--no-auth` to assert it (auth-required sites fail fast naming themselves; `--no-auth` + `--prefer-cookies`/`--cookies` together is an error) |
 | Diagnosing login flow | `--debug-login` (redacted URLs, parse flags, auth markers) |
@@ -332,7 +356,7 @@ Every flag, grouped by job. `config.toml` can default the flags (quality, concur
 - Python `==3.12.*`, stdlib + [`requests`](https://requests.readthedocs.io/) (+ optional [`tqdm`](https://tqdm.tqdm.pro/))
 - [`playwright`](https://playwright.dev/python/) 1.62 (`browser` extra) — URL harvesting only, never downloading
 - [`imageio-ffmpeg`](https://github.com/imageio/imageio-ffmpeg) 0.6.0 → ffmpeg 7.0.2-static (`ffmpeg` extra), system ffmpeg fallback
-- [`pytest`](https://pytest.org/) 9 (`test` extra) — 183 offline tests
+- [`pytest`](https://pytest.org/) 9 (`test` extra) — 185 offline tests
 - `uv` for environments, `git` for everything else
 
 ---
@@ -342,7 +366,7 @@ Every flag, grouped by job. `config.toml` can default the flags (quality, concur
 - **Public-only, except StudyGateway.** No livestreams (rejected cleanly), no private/password videos outside StudyGateway (gated with clear errors), no DRM — a DRM-walled site is a hard stop, not an engineering task.
 - **Sites change shape.** Selectors, form fields, and player internals drift; the offline suite pins *our* logic, live runs are the real check. Fresh failures deserve a DevTools look before a code look.
 - **Cloudflare-gated origins** (Rumble) need the browser bootstrap path; pure-`requests` returns 403 there by design.
-- **The pinned static ffmpeg segfaults** in its TS demuxer on some files — the remuxer falls back to system ffmpeg automatically and says so. Upstream report pending.
+- **The pinned static ffmpeg segfaults (Linux 7.0.2-static build)** in its TS demuxer on some files — the remuxer falls back to system ffmpeg automatically and says so. Windows ships a different (Gyan 7.1) build with no segfault seen yet. Upstream report pending.
 - **Refusal (not overwrite)** on name collision — single runs fail, batch entries skip with a note.
 - **Disk space is preflighted, not assumed** — the tool estimates the download, checks both the temp and output filesystems, and refuses before downloading a single byte when short (override with `--no-space-check`, e.g. for NAS/cloud drives that can't be stat'ed). `--output-dir` and `--temp-dir` (RAM drives welcome) control where outputs and intermediates land; a bare `-o` filename joins under `--output-dir`, a dir-ful `-o` wins outright.
 

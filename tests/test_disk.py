@@ -24,7 +24,8 @@ def test_free_bytes_unreadable_is_none(monkeypatch):
   monkeypatch.setattr(disk_mod.shutil, "disk_usage",
                       lambda _: (_ for _ in ()).throw(OSError("NAS")))
   monkeypatch.setattr(disk_mod.os, "statvfs",
-                      lambda _: (_ for _ in ()).throw(OSError("NAS")))
+                      lambda _: (_ for _ in ()).throw(OSError("NAS")),
+                      raising=False)
   assert free_bytes("/mnt/nas") is None
 
 
@@ -42,7 +43,8 @@ def test_free_bytes_prefers_bavail_over_free(monkeypatch):
     seen["shutil_called"] = True
     raise AssertionError("shutil must not run when statvfs works")
 
-  monkeypatch.setattr(disk_mod.os, "statvfs", lambda _: _Stat())
+  monkeypatch.setattr(disk_mod.os, "statvfs", lambda _: _Stat(),
+                      raising=False)
   monkeypatch.setattr(disk_mod.shutil, "disk_usage", _du)
   assert free_bytes("/mnt/f") == 551_000_000
   assert seen == {}
@@ -74,7 +76,8 @@ def test_check_space_passes(tmp_path, monkeypatch):
   class _U:
     free = 10_000_000_000
   monkeypatch.setattr(disk_mod.os, "statvfs",
-                      lambda _: (_ for _ in ()).throw(OSError("no stat")))
+                      lambda _: (_ for _ in ()).throw(OSError("no stat")),
+                      raising=False)
   monkeypatch.setattr(disk_mod.shutil, "disk_usage", lambda _: _U())
   check_space(tmp_path, 100, "temporary files")
 
@@ -83,7 +86,8 @@ def test_check_space_fails_with_numbers(tmp_path, monkeypatch):
   class _U:
     free = 10
   monkeypatch.setattr(disk_mod.os, "statvfs",
-                      lambda _: (_ for _ in ()).throw(OSError("no stat")))
+                      lambda _: (_ for _ in ()).throw(OSError("no stat")),
+                      raising=False)
   monkeypatch.setattr(disk_mod.shutil, "disk_usage", lambda _: _U())
   with pytest.raises(SystemExit) as exc:
     check_space(tmp_path, 5_000_000_000, "output")
@@ -92,7 +96,8 @@ def test_check_space_fails_with_numbers(tmp_path, monkeypatch):
 
 def test_check_space_unreadable_warns_and_passes(tmp_path, monkeypatch, capsys):
   monkeypatch.setattr(disk_mod.os, "statvfs",
-                      lambda _: (_ for _ in ()).throw(OSError("cloud")))
+                      lambda _: (_ for _ in ()).throw(OSError("cloud")),
+                      raising=False)
   monkeypatch.setattr(disk_mod.shutil, "disk_usage",
                       lambda _: (_ for _ in ()).throw(OSError("cloud")))
   check_space(tmp_path, 10**12, "output")

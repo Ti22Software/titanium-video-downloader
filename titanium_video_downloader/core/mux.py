@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from subprocess import Popen
 
 from ..extractors.base import fail
 from .disk import io_fail
@@ -33,9 +34,13 @@ def mux(video_path, audio_path, out_path, total_duration=None, ffmpeg=None):
   # interactive mode on tty stdin and restores termios only on clean exit;
   # a crash (e.g. segfault) would otherwise leave echo disabled, hiding
   # all typed input until `reset`. Progress already comes via pipe:1.
-  proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                          text=True)
+  # NOTE: Popen is bound here (not via subprocess.Popen) so tests can fake
+  # just mux's spawning: imageio-ffmpeg's own binary validation uses
+  # subprocess.Popen as a context manager internally, and a global fake
+  # breaks binary resolution with a confusing "no ffmpeg found".
+  proc = Popen(cmd, stdout=subprocess.PIPE,
+               stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+               text=True)
   try:
     for line in proc.stdout:
       line = line.strip()
