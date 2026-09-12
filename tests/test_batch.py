@@ -4,7 +4,9 @@ import argparse
 
 import pytest
 
+from titanium_video_downloader import cli as cli_mod
 from titanium_video_downloader.core.batch import dedupe_entries, is_url, parse_batch_file
+from titanium_video_downloader.core.session import new_session
 
 
 def test_is_url_heuristic():
@@ -116,3 +118,40 @@ def test_run_batch_upfront_gate_sums(tmp_path, monkeypatch):
   from titanium_video_downloader.core.disk import HEADROOM_BYTES
   assert gated["batch temporary files"] == 150 + HEADROOM_BYTES
   assert gated["batch outputs"] == 300 + HEADROOM_BYTES
+
+
+class _ReuseProv:
+  """Fake auth-required provider counting real login calls."""
+
+  site_key = "sgtest"
+  requires_auth = True
+  cookie_domains = ()
+
+  def __init__(self):
+    self.logins = 0
+
+  def browser_login(self, session, email, password, debug=False, headed=False):
+    self.logins += 1
+    return session
+
+  def resolve_embed(self, session, url, debug=False):
+    return "https://embed.example/x"
+
+
+def test_batch_auth_reuse_single_login(monkeypatch, capsys):
+  prov = _ReuseProv()
+  monkeypatch.setattr(cli_mod, "provider_for", lambda url: prov)
+  args = _batch_args(login_only=True, debug_login=True,
+                     email="a@b.c", password="x")
+  session = new_session()
+  authed = set()
+  kw = dict(quality=None, tag="", batch=True, authed=authed,
+            output_arg=None, output_dir=None, temp_dir=None)
+  out1 = cli_mod._resolve_entry(session, args, "https://sg/v1", **kw)
+  out2 = cli_mod._resolve_entry(session, args, "https://sg/v2", **kw)
+  assert out1["action"] == out2["action"] == "loginonly"
+  assert prov.logins == 1
+  assert authed == {"sgtest"}
+  err = capsys.readouterr().err
+  assert err.count("login ok") == 1
+  assert err.count("reusing sgtest session") == 1

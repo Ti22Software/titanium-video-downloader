@@ -159,7 +159,7 @@ exist), skipped by `--no-space-check`, list modes return earlier:
 ### Current module layout (`titanium_video_downloader/` package, v0.1.0)
 
 Phase 1 package move done: verbatim code motion, prints intact (event bus
-deferred), `ti22_video_dl.py` kept as a thin shim. 182 offline pytest tests green
+deferred), `ti22_video_dl.py` kept as a thin shim. 183 offline pytest tests green
 (naming, selection, parsers, auth markers, stubbed login, login waiter,
 env/no-auth/quality, batch ledger/gates, appconfig layering, per-site
 cookies truth-check, vimeo, rumble incl. shorts + progressive-mp4,

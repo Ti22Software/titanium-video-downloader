@@ -97,7 +97,7 @@ titanium-video-downloader/
 │       ├── rumble.py          watch→key→embedJS, muxed-HLS + progressive-mp4 renditions, gated-origin bootstrap
 │       ├── rightnowmedia.py   stub — match real, rest waits for probe
 │       └── generic.py         fallback slot for the unknown site
-├── tests/                     182 offline tests (no network): parsers, auth, login stubs + fail-fast waiter,
+├── tests/                     183 offline tests (no network): parsers, auth, login stubs + fail-fast waiter,
 │                              no-auth matrix, env/.env/config.toml, per-site cookies, quality, remux, ffmpeg resolve,
 │                              batch ledger, rumble variants, direct download
 ├── ti22_video_dl.py           thin shim so `python ti22_video_dl.py ...` keeps working
@@ -153,7 +153,7 @@ Downloads Chromium into the shared per-user cache (reused across projects). Only
 .venv/bin/python -m pytest tests/ -q
 ```
 
-This runs the 182 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
+This runs the 183 offline tests — parsers, auth markers, stubbed logins, credential precedence, quality math, remux fallback. No network involved. If they pass, the plumbing is sound; live downloads are a separate check (tokens expire, sites change shape).
 
 ---
 
@@ -316,7 +316,7 @@ Every flag, grouped by job. `config.toml` can default the flags (quality, concur
 - Python `==3.12.*`, stdlib + [`requests`](https://requests.readthedocs.io/) (+ optional [`tqdm`](https://tqdm.tqdm.pro/))
 - [`playwright`](https://playwright.dev/python/) 1.62 (`browser` extra) — URL harvesting only, never downloading
 - [`imageio-ffmpeg`](https://github.com/imageio/imageio-ffmpeg) 0.6.0 → ffmpeg 7.0.2-static (`ffmpeg` extra), system ffmpeg fallback
-- [`pytest`](https://pytest.org/) 9 (`test` extra) — 182 offline tests
+- [`pytest`](https://pytest.org/) 9 (`test` extra) — 183 offline tests
 - `uv` for environments, `git` for everything else
 
 ---
