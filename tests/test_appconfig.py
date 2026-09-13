@@ -3,7 +3,9 @@
 import argparse
 import io
 import json
+import tomllib
 from contextlib import redirect_stderr
+from pathlib import Path
 
 import pytest
 
@@ -107,6 +109,45 @@ def test_prefer_cookies_layering():
     _args(prefer_cookies=True), file_pairs={"prefer_cookies": False})
   assert args.prefer_cookies is True
   assert sources["prefer_cookies"] == "cli"
+
+
+def test_package_version_importable():
+  import titanium_video_downloader
+  # "unknown" on unbuilt source checkouts, real version after install.
+  assert isinstance(titanium_video_downloader.__version__, str)
+
+
+def test_version_config_and_fallback_drift():
+  """pyproject stays setuptools-scm-driven with a fallback tracking the
+  latest tag. Goes red exactly when a release forgot the bump."""
+  import shutil
+  import subprocess
+  root = Path(__file__).resolve().parent.parent
+  doc = tomllib.loads((root / "pyproject.toml").read_text())
+  assert "version" in (doc["project"].get("dynamic") or [])
+  assert "version" not in doc["project"], "static version defeats setuptools-scm"
+  scm = doc.get("tool", {}).get("setuptools_scm", {})
+  assert scm.get("write_to") == "titanium_video_downloader/_version.py"
+  fallback = scm.get("fallback_version")
+  assert fallback, "fallback_version required for git-less builds"
+  if shutil.which("git") is None:
+    pytest.skip("no git to compare tags")
+  try:
+    tag = subprocess.run(["git", "describe", "--tags", "--abbrev=0"],
+                         capture_output=True, text=True, cwd=root,
+                         timeout=30).stdout.strip()
+  except (OSError, subprocess.SubprocessError):
+    pytest.skip("git describe unavailable")
+  if not tag:
+    pytest.skip("no tags yet")
+  assert fallback == tag.lstrip("v"), f"fallback {fallback} trails tag {tag}"
+
+
+def test_print_config_includes_package_version(capsys):
+  from titanium_video_downloader.cli import main
+  assert main(["--print-config"]) == 0
+  doc = json.loads(capsys.readouterr().out)
+  assert isinstance(doc["package_version"], str)
 
 
 def test_blank_cli_flag_fails_like_bad_flag(capsys):

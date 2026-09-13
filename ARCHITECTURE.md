@@ -356,6 +356,11 @@ manifest/MSE traffic. Report back: DRM yes/no + login flow calls
   imports (declare `hiddenimports`); no `__file__`-relative paths
   (`importlib.resources` only); tiny dep surface (`requests` + stdlib +
   optional `tqdm`).
+- **Release checklist** (source tags): clean tree → suite green (both
+  platforms when touched) → bump `fallback_version` to the new tag
+  (enforced by `test_version_config_and_fallback_drift`) → `git tag -a`
+  → push commits → push tag → draft notes → verify `Latest` flipped.
+  Never retag published releases; roll forward instead.
 
 ## Risks (priority order)
 

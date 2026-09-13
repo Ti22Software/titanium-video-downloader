@@ -1,3 +1,6 @@
 """Titanium Downloader: multi-site streaming downloader (CLI first)."""
 
-__version__ = "0.1.0"
+try:
+    from ._version import __version__
+except ImportError:  # source checkout, never built (dev runs, tests)
+    __version__ = "unknown"

@@ -164,9 +164,11 @@ def resolve_config(args, config_path=None, file_pairs=None):
 
 def effective_config(args, sources, config_path):
   """JSON-serializable snapshot for --print-config (no secrets)."""
+  from .. import __version__ as _pkg_version
   keys = list(BUILTINS) + ["pick"]
   return {
     "config_file": str(config_path) if config_path else None,
+    "package_version": _pkg_version,
     "values": {k: getattr(args, k, None) for k in keys},
     "sources": {k: sources.get(k, "?") for k in keys},
   }
