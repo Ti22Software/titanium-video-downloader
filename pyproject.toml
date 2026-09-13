@@ -21,7 +21,7 @@ test = ["pytest"]
 ti22-video-dl = "titanium_video_downloader.cli:main"
 
 [tool.setuptools_scm]
-fallback_version = "0.1.2"
+fallback_version = "0.1.3"
 write_to = "titanium_video_downloader/_version.py"
 
 [tool.setuptools.packages.find]
